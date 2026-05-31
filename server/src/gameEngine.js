@@ -1,4 +1,4 @@
-const PLAYER_COLORS = ['#ff00ff', '#00e5ff', '#ffe600', '#00ff66'];
+const PLAYER_COLORS = ['#ff00ff', '#00e5ff', '#ffe600', '#00ff66', '#ff7a00', '#8a5cff'];
 import { SERVER_CONFIG } from './config.js';
 
 function clamp(value, min, max) {
@@ -18,10 +18,10 @@ function keyOf(x, y, cols) {
 }
 
 export class GameEngine {
-  constructor({ rows = 10, maxPlayers = 2 }) {
+  constructor({ rows = 10, maxPlayers = 6 }) {
     this.rows = clamp(rows, 6, 20);
     this.cols = this.rows * 2;
-    this.maxPlayers = clamp(maxPlayers, 1, 4);
+    this.maxPlayers = clamp(maxPlayers, 1, 6);
 
     this.cells = [];
     this.walls = [];
@@ -29,6 +29,7 @@ export class GameEngine {
     this.ghosts = [];
     this.portals = [];
     this.traps = [];
+    this.particles = [];
 
     this.exit = { x: this.cols - 1, y: randInt(0, this.rows) };
     this.exitLocked = true;
@@ -281,6 +282,8 @@ export class GameEngine {
     this._updatePlayers(dtMs, inputBySocket);
     this._updateGhosts(dtMs);
     this._updateTraps(dtMs);
+    this._updateParticles(dtMs);
+    this._arrangeAllPlayers();
 
     if (this.finish) {
       this.minBright = Math.min(100, this.minBright + (dtMs / 1000) * SERVER_CONFIG.finish.fadePerSecond);
@@ -305,9 +308,12 @@ export class GameEngine {
       if (player.fall) {
         player.diameter = Math.max(0, player.diameter - dtMs * 0.0008);
         if (player.diameter <= 0.05) {
-          player.dead = 2;
           player.fall = false;
-          this._updateKeyOwnerOnDeath(player);
+          player.dead = 1;
+          player.diameter = 0.5;
+          player.reviveStartedAt = 0;
+          this._relocateDownedPlayer(player);
+          this._spawnHealParticles(player.cx, player.cy, player.color, 14, 0.8);
         }
       }
 
@@ -319,6 +325,8 @@ export class GameEngine {
           if (this.tickMs - player.reviveStartedAt >= SERVER_CONFIG.player.reviveMs) {
             player.dead = 0;
             player.reviveStartedAt = 0;
+            player.diameter = 0.5;
+            this._spawnHealParticles(player.cx, player.cy, player.color, 18, 1);
           }
         } else {
           player.reviveStartedAt = 0;
@@ -332,8 +340,12 @@ export class GameEngine {
       const move = this._getMoveFromInput(input);
       if (move) {
         if (this.tickMs - player.lastMoveAt >= SERVER_CONFIG.player.moveCooldownMs) {
+          const oldX = player.x;
+          const oldY = player.y;
           if (this._canMove(player, move, true)) {
             this._applyMove(player, move);
+            this._arrangePlayersAt(oldX, oldY);
+            this._arrangePlayersAt(player.x, player.y);
           }
           player.lastMoveAt = this.tickMs;
         }
@@ -397,6 +409,18 @@ export class GameEngine {
     this.ghosts = this.ghosts.filter((g) => !g.dead);
   }
 
+  _updateParticles(dtMs) {
+    for (const particle of this.particles) {
+      particle.life -= dtMs;
+      particle.x += particle.vx * dtMs;
+      particle.y += particle.vy * dtMs;
+      particle.vx *= 0.985;
+      particle.vy *= 0.985;
+    }
+
+    this.particles = this.particles.filter((p) => p.life > 0);
+  }
+
   _updateTraps(dtMs) {
     for (const trap of this.traps) {
       if (!trap.set) {
@@ -417,6 +441,49 @@ export class GameEngine {
     }
 
     this.traps = this.traps.filter((t) => !t.dead);
+  }
+
+  _relocateDownedPlayer(player) {
+    const nextX = randInt(0, this.cols);
+    const nextY = randInt(0, this.rows);
+    player.x = nextX;
+    player.y = nextY;
+    player.fx = nextX;
+    player.fy = nextY;
+    player.cx = nextX;
+    player.cy = nextY;
+    this._updateKeyOwnerOnDeath(player);
+  }
+
+  _spawnHealParticles(x, y, color, count = 12, speed = 1) {
+    const centerX = x;
+    const centerY = y;
+    for (let i = 0; i < count; i += 1) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.25;
+      const dist = 0.08 + Math.random() * 0.16;
+      this.particles.push({
+        x: centerX + Math.cos(angle) * dist,
+        y: centerY + Math.sin(angle) * dist,
+        vx: Math.cos(angle) * (0.0008 + Math.random() * 0.0012) * speed,
+        vy: Math.sin(angle) * (0.0008 + Math.random() * 0.0012) * speed,
+        life: 420 + Math.random() * 260,
+        maxLife: 680,
+        color,
+        size: 0.05 + Math.random() * 0.05
+      });
+    }
+  }
+
+  _updateParticles(dtMs) {
+    for (const particle of this.particles) {
+      particle.life -= dtMs;
+      particle.x += particle.vx * dtMs;
+      particle.y += particle.vy * dtMs;
+      particle.vx *= 0.985;
+      particle.vy *= 0.985;
+    }
+
+    this.particles = this.particles.filter((p) => p.life > 0);
   }
 
   _lerpEntity(entity, dtMs) {
@@ -516,6 +583,88 @@ export class GameEngine {
   _updateKeyOwnerOnDeath(player) {
     if (!this.keyOwner || this.keyOwner.type !== 'player' || this.keyOwner.playerId !== player.id) return;
     this.keyOwner = { type: 'cell', x: Math.round(player.cx), y: Math.round(player.cy) };
+  }
+
+  _relocateDownedPlayer(player) {
+    const nextX = randInt(0, this.cols);
+    const nextY = randInt(0, this.rows);
+    player.x = nextX;
+    player.y = nextY;
+    player.fx = nextX;
+    player.fy = nextY;
+    player.cx = nextX;
+    player.cy = nextY;
+    this._updateKeyOwnerOnDeath(player);
+  }
+
+  _spawnHealParticles(x, y, color, count = 12, speed = 1) {
+    const centerX = x;
+    const centerY = y;
+    for (let i = 0; i < count; i += 1) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.25;
+      const dist = 0.08 + Math.random() * 0.16;
+      this.particles.push({
+        x: centerX + Math.cos(angle) * dist,
+        y: centerY + Math.sin(angle) * dist,
+        vx: Math.cos(angle) * (0.0008 + Math.random() * 0.0012) * speed,
+        vy: Math.sin(angle) * (0.0008 + Math.random() * 0.0012) * speed,
+        life: 420 + Math.random() * 260,
+        maxLife: 680,
+        color,
+        size: 0.05 + Math.random() * 0.05
+      });
+    }
+  }
+
+  _arrangePlayersAt(x, y) {
+    if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return;
+
+    const list = this.players
+      .filter((p) => p.socketId && !p.escaped && p.x === x && p.y === y && (p.dead === 0 || p.dead === 1))
+      .sort((a, b) => a.id - b.id);
+
+    this._applyPlayerSpread(list);
+  }
+
+  _applyPlayerSpread(list) {
+    if (!list || list.length === 0) return;
+    if (list.length === 1) {
+      list[0].fx = list[0].x;
+      list[0].fy = list[0].y;
+      return;
+    }
+
+    // Match original p5 behavior: rotate a diagonal vector each step.
+    const theta = (Math.PI * 2) / list.length;
+    let vx = SERVER_CONFIG.player.sameTileSpread;
+    let vy = SERVER_CONFIG.player.sameTileSpread;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+
+    for (let i = 0; i < list.length; i += 1) {
+      const nextX = vx * cosT - vy * sinT;
+      const nextY = vx * sinT + vy * cosT;
+      vx = nextX;
+      vy = nextY;
+      list[i].fx = list[i].x + vx;
+      list[i].fy = list[i].y + vy;
+    }
+  }
+
+  _arrangeAllPlayers() {
+    const grouped = new Map();
+    for (const p of this.players) {
+      if (!p.socketId || p.escaped) continue;
+      if (!(p.dead === 0 || p.dead === 1)) continue;
+      const key = `${p.x},${p.y}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(p);
+    }
+
+    for (const group of grouped.values()) {
+      group.sort((a, b) => a.id - b.id);
+      this._applyPlayerSpread(group);
+    }
   }
 
   _canMove(entity, dir, canEscape) {
@@ -738,6 +887,16 @@ export class GameEngine {
         y: p.y,
         active: p.activationMs <= 0,
         pulse: p.pulse
+      })),
+      particles: this.particles.map((p) => ({
+        x: p.x,
+        y: p.y,
+        vx: p.vx,
+        vy: p.vy,
+        life: p.life,
+        maxLife: p.maxLife,
+        color: p.color,
+        size: p.size
       })),
       traps: this.traps.map((t) => ({
         x: t.x,

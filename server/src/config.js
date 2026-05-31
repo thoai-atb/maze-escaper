@@ -11,7 +11,8 @@ export const SERVER_CONFIG = {
   player: {
     moveCooldownMs: 90, // Increase -> slower/chunkier player stepping. Decrease -> faster/more continuous stepping.
     reviveMs: 5000, // Increase -> longer revive time. Decrease -> faster revive.
-    trapCooldownMs: 250 // Increase -> traps placed less often. Decrease -> traps placed more often.
+    trapCooldownMs: 250, // Increase -> traps placed less often. Decrease -> traps placed more often.
+    sameTileSpread: 0.1 // Increase -> players on same tile are displayed farther apart. Decrease -> closer together.
   },
   ghost: {
     moveMs: 700, // Increase -> normal ghosts move less often (easier). Decrease -> move more often (harder).

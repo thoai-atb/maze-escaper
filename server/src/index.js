@@ -22,6 +22,32 @@ const rooms = new Map();
 const socketRoom = new Map();
 const inputStateBySocket = new Map();
 
+function getPublicRoomList() {
+  const list = [];
+  for (const room of rooms.values()) {
+    const status = room.engine.getRoomStatus();
+    const connectedCount = status.players.filter((p) => p.connected).length;
+    if (room.started) continue;
+    list.push({
+      roomCode: room.roomCode,
+      hostSocketId: room.hostSocketId,
+      hostName: status.players.find((p) => p.socketId === room.hostSocketId)?.name || 'Host',
+      rows: room.engine.rows,
+      cols: room.engine.cols,
+      maxPlayers: room.engine.maxPlayers,
+      connectedPlayers: connectedCount,
+      createdAt: room.createdAt
+    });
+  }
+
+  list.sort((a, b) => b.createdAt - a.createdAt);
+  return list;
+}
+
+function emitRoomList() {
+  io.emit('room:list:update', { rooms: getPublicRoomList() });
+}
+
 function createRoom({ hostSocketId, hostName, rows, maxPlayers }) {
   const roomCode = nanoid();
   const engine = new GameEngine({ rows, maxPlayers });
@@ -87,6 +113,8 @@ function leaveCurrentRoom(socketId) {
   if (room.engine.isEmptyRoom()) {
     rooms.delete(roomCode);
   }
+
+  emitRoomList();
 }
 
 function emitRoomUpdate(roomCode) {
@@ -111,6 +139,11 @@ function removeSocketFromRoom(socket) {
 
 io.on('connection', (socket) => {
   socket.emit('welcome', { socketId: socket.id });
+  socket.emit('room:list:update', { rooms: getPublicRoomList() });
+
+  socket.on('room:list', (cb) => {
+    cb?.({ ok: true, rooms: getPublicRoomList() });
+  });
 
   socket.on('room:create', (payload, cb) => {
     try {
@@ -120,7 +153,7 @@ io.on('connection', (socket) => {
         hostSocketId: socket.id,
         hostName: payload?.name || 'Host',
         rows: Number(payload?.rows || 10),
-        maxPlayers: Number(payload?.maxPlayers || 2)
+        maxPlayers: Number(payload?.maxPlayers || 6)
       });
 
       if (!room) {
@@ -130,6 +163,7 @@ io.on('connection', (socket) => {
 
       socket.join(room.roomCode);
       emitRoomUpdate(room.roomCode);
+      emitRoomList();
       cb?.({ ok: true, roomCode: room.roomCode });
     } catch (err) {
       cb?.({ ok: false, error: 'Unexpected error creating room.' });
@@ -153,6 +187,7 @@ io.on('connection', (socket) => {
 
       socket.join(roomCode);
       emitRoomUpdate(roomCode);
+      emitRoomList();
       cb?.({ ok: true, roomCode });
     } catch (err) {
       cb?.({ ok: false, error: 'Unexpected error joining room.' });
@@ -189,6 +224,7 @@ io.on('connection', (socket) => {
       status: room.engine.getRoomStatus()
     });
     emitRoomUpdate(roomCode);
+    emitRoomList();
     cb?.({ ok: true });
   });
 
@@ -217,6 +253,7 @@ io.on('connection', (socket) => {
       status: nextEngine.getRoomStatus()
     });
     emitRoomUpdate(roomCode);
+    emitRoomList();
     cb?.({ ok: true });
   });
 
@@ -267,6 +304,7 @@ setInterval(() => {
       rooms.delete(roomCode);
     }
   }
+  emitRoomList();
 }, SERVER_CONFIG.net.roomGcIntervalMs);
 
 const PORT = Number(process.env.PORT || 3001);
