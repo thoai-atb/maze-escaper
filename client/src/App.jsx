@@ -158,18 +158,21 @@ export default function App() {
       setRoomCode(data.roomCode);
       setRoomStatus(data.status);
       if (typeof data.status?.remainingLives === 'number') setRemainingLives(data.status.remainingLives);
+      if (typeof data.status?.resultsOpened === 'boolean') setShowResults(data.status.resultsOpened);
       setHostSocketId(data.hostSocketId || '');
       setStarted(Boolean(data.started));
       setError('');
     };
     const onGameStart = () => {
       setStarted(true);
+      setShowResults(false);
       setError('');
     };
     const onGameState = (data) => {
       setSnapshot(data.snapshot);
       if (Array.isArray(data.levelHistory)) setLevelHistory(data.levelHistory);
       if (typeof data.remainingLives === 'number') setRemainingLives(data.remainingLives);
+      if (typeof data.resultsOpened === 'boolean') setShowResults(data.resultsOpened);
     };
     const onRoomListUpdate = (data) => {
       setPublicRooms(Array.isArray(data?.rooms) ? data.rooms : []);
@@ -267,6 +270,15 @@ export default function App() {
         socket.emit('room:toggle-cheat', (res) => {
           if (!res?.ok) {
             setError(res?.error || 'Unable to toggle cheat mode.');
+          }
+        });
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'o') {
+        socket.emit('room:skip-level', (res) => {
+          if (!res?.ok) {
+            setError(res?.error || 'Unable to skip level.');
           }
         });
         return;
@@ -479,6 +491,14 @@ export default function App() {
     });
   };
 
+  const viewResults = () => {
+    socket.emit('room:view-results', (res) => {
+      if (!res?.ok) {
+        setError(res?.error || 'Unable to open results.');
+      }
+    });
+  };
+
   const inRoom = Boolean(roomCode);
   const isHost = mySocketId && hostSocketId === mySocketId;
   const connectedPlayers = (roomStatus?.players || []).filter((p) => p.connected);
@@ -495,12 +515,8 @@ export default function App() {
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
-
-  useEffect(() => {
-    if (showLevelActionButton && showResultActionForAll) {
-      setShowResults(true);
-    }
-  }, [showLevelActionButton, showResultActionForAll]);
+  const levelFiveResult = levelHistory.find((entry) => entry.level === 5);
+  const completedAllLevels = Boolean(levelFiveResult?.players?.some((p) => p.escaped));
 
   const finishButtonMetrics = useMemo(() => {
     const width = viewportSize.width;
@@ -588,7 +604,7 @@ export default function App() {
             className="round-restart-finish"
             onClick={() => {
               if (allLevelsCleared || outOfLives) {
-                setShowResults(true);
+                viewResults();
               } else if (levelSucceeded) {
                 goToNextLevel();
               } else {
@@ -608,7 +624,7 @@ export default function App() {
           <div className="results-overlay">
             <div className="results-panel">
               <h2 className="results-title">
-                {highestLevelReached >= 5 ? 'All level finished 🏆' : `Highest level reached: ${highestLevelReached}`}
+                {completedAllLevels ? 'All level finished 🏆' : `Highest level reached: ${highestLevelReached}`}
               </h2>
               <div className="results-levels">
                 {[1, 2, 3, 4, 5].map((lvl) => {
@@ -737,7 +753,7 @@ export default function App() {
                       <div>
                         <div className="room-browser-code">{r.roomCode}</div>
                         <div className="room-browser-meta">
-                          Host {r.hostName} • Players {r.connectedPlayers}/{r.maxPlayers}
+                          {r.hostName || 'Host'} • Players {r.connectedPlayers}/{r.maxPlayers}
                         </div>
                       </div>
                       <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)}>

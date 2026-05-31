@@ -31,8 +31,8 @@ export const TILE_COLOR_CONFIG = Object.freeze({
 
 export const LEVEL_TILE_THEMES = Object.freeze({
   1: {
-    unvisited: { hue: 35, saturation: 96, lightnessScale: 0.36 },
-    visited: { hue: 35, saturation: 96, lightnessScale: 0.5 }
+    unvisited: { hue: 25, saturation: 96, lightnessScale: 0.36 },
+    visited: { hue: 25, saturation: 96, lightnessScale: 0.5 }
   },
   2: {
     unvisited: { hue: 50, saturation: 78, lightnessScale: 0.36 },

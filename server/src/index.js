@@ -36,11 +36,12 @@ function getPublicRoomList() {
   for (const room of rooms.values()) {
     const status = room.engine.getRoomStatus();
     const connectedCount = status.players.filter((p) => p.connected).length;
+    const hostPlayer = room.engine.players.find((p) => p.socketId === room.hostSocketId);
     if (room.started) continue;
     list.push({
       roomCode: room.roomCode,
       hostSocketId: room.hostSocketId,
-      hostName: status.players.find((p) => p.socketId === room.hostSocketId)?.name || 'Host',
+      hostName: hostPlayer?.name || 'Host',
       level: room.engine.level,
       rows: room.engine.rows,
       cols: room.engine.cols,
@@ -112,6 +113,7 @@ function createRoom({ hostSocketId, hostName, maxPlayers }) {
     levelAttempts: { 1: 1 },
     roundStartedAt: 0,
     roundFinishedAt: 0,
+    resultsOpened: false,
     resultPlayerIds: [],
     remainingLives: INITIAL_LIVES,
     failurePenaltyApplied: false
@@ -164,7 +166,8 @@ function leaveCurrentRoom(socketId) {
     roomCode,
     status: {
       ...room.engine.getRoomStatus(),
-      remainingLives: room.remainingLives
+      remainingLives: room.remainingLives,
+      resultsOpened: room.resultsOpened
     },
     hostSocketId: room.hostSocketId,
     started: room.started
@@ -183,7 +186,11 @@ function emitRoomUpdate(roomCode) {
 
   io.to(roomCode).emit('room:update', {
     roomCode,
-    status: room.engine.getRoomStatus(),
+    status: {
+      ...room.engine.getRoomStatus(),
+      remainingLives: room.remainingLives,
+      resultsOpened: room.resultsOpened
+    },
     hostSocketId: room.hostSocketId,
     started: room.started
   });
@@ -199,6 +206,26 @@ function removeSocketFromRoom(socket) {
 
 function levelSucceeded(engine) {
   return engine.players.some((player) => player.escaped);
+}
+
+function getParticipantIdSet(room) {
+  if (room.resultPlayerIds?.length) {
+    return new Set(room.resultPlayerIds);
+  }
+  return new Set(room.engine.getConnectedPlayers().map((player) => player.id));
+}
+
+function applySkipLevelOutcome(room) {
+  const participantIds = getParticipantIdSet(room);
+  for (const player of room.engine.players) {
+    if (!participantIds.has(player.id)) continue;
+    player.dead = 0;
+    player.escaped = true;
+    player.fall = false;
+  }
+
+  room.engine.finish = true;
+  room.roundFinishedAt = room.roundStartedAt || Date.now();
 }
 
 io.on('connection', (socket) => {
@@ -286,12 +313,14 @@ io.on('connection', (socket) => {
     room.failurePenaltyApplied = false;
     room.roundStartedAt = Date.now();
     room.roundFinishedAt = 0;
+    room.resultsOpened = false;
     room.started = true;
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
         ...room.engine.getRoomStatus(),
-        remainingLives: room.remainingLives
+        remainingLives: room.remainingLives,
+        resultsOpened: room.resultsOpened
       }
     });
     emitRoomUpdate(roomCode);
@@ -328,12 +357,14 @@ io.on('connection', (socket) => {
     room.levelAttempts[currentLevel] = (room.levelAttempts[currentLevel] || 1) + 1;
     room.roundStartedAt = Date.now();
     room.roundFinishedAt = 0;
+    room.resultsOpened = false;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
         ...nextEngine.getRoomStatus(),
-        remainingLives: room.remainingLives
+        remainingLives: room.remainingLives,
+        resultsOpened: room.resultsOpened
       }
     });
     emitRoomUpdate(roomCode);
@@ -371,12 +402,14 @@ io.on('connection', (socket) => {
     room.levelAttempts[nextLevel] = 1;
     room.roundStartedAt = Date.now();
     room.roundFinishedAt = 0;
+    room.resultsOpened = false;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
         ...nextEngine.getRoomStatus(),
-        remainingLives: room.remainingLives
+        remainingLives: room.remainingLives,
+        resultsOpened: room.resultsOpened
       }
     });
     emitRoomUpdate(roomCode);
@@ -387,6 +420,61 @@ io.on('connection', (socket) => {
   socket.on('room:leave', (cb) => {
     removeSocketFromRoom(socket);
     socket.emit('room:left');
+    cb?.({ ok: true });
+  });
+
+  socket.on('room:view-results', (cb) => {
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) {
+      cb?.({ ok: false, error: 'Not in a room.' });
+      return;
+    }
+
+    const room = rooms.get(roomCode);
+    if (!room) {
+      cb?.({ ok: false, error: 'Room not found.' });
+      return;
+    }
+
+    if (!room.engine.finish) {
+      cb?.({ ok: false, error: 'Round is not finished yet.' });
+      return;
+    }
+
+    room.resultsOpened = true;
+    emitRoomUpdate(roomCode);
+    cb?.({ ok: true });
+  });
+
+  socket.on('room:skip-level', (cb) => {
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) {
+      cb?.({ ok: false, error: 'Not in a room.' });
+      return;
+    }
+
+    const room = rooms.get(roomCode);
+    if (!room) {
+      cb?.({ ok: false, error: 'Room not found.' });
+      return;
+    }
+
+    if (!room.started) {
+      cb?.({ ok: false, error: 'Game has not started.' });
+      return;
+    }
+
+    if (room.hostSocketId !== socket.id) {
+      cb?.({ ok: false, error: 'Only host can use skip shortcut.' });
+      return;
+    }
+
+    if (room.engine.finish) {
+      cb?.({ ok: false, error: 'Round is already finished.' });
+      return;
+    }
+
+    applySkipLevelOutcome(room);
     cb?.({ ok: true });
   });
 
@@ -456,7 +544,8 @@ setInterval(() => {
       roomCode,
       snapshot,
       levelHistory: getLevelResults(room),
-      remainingLives: room.remainingLives
+      remainingLives: room.remainingLives,
+      resultsOpened: room.resultsOpened
     });
   }
 }, SERVER_CONFIG.net.tickIntervalMs);
