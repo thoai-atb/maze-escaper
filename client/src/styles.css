@@ -1,0 +1,259 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=swap');
+
+:root {
+  --bg-main: #040404;
+  --bg-panel: #0e0e0e;
+  --bg-card: #181818;
+  --line: #4f4f4f;
+  --line-soft: #2b2b2b;
+  --accent: #e78300;
+  --accent-2: #ffb85f;
+  --text-main: #f2eee8;
+  --text-sub: #b9b7b3;
+  --error: #ff5f5f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 8%, rgba(255, 136, 0, 0.13), transparent 32%),
+    radial-gradient(circle at 80% 0%, rgba(255, 219, 173, 0.08), transparent 24%),
+    linear-gradient(180deg, #050505, #0a0a0a 35%, #020202 100%);
+  color: var(--text-main);
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.app-shell {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 22px;
+}
+
+.masthead {
+  text-align: center;
+  margin-bottom: 18px;
+}
+
+.masthead h1 {
+  font-family: 'Cinzel', serif;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  margin: 0;
+  letter-spacing: 0.07em;
+}
+
+.masthead p {
+  margin-top: 8px;
+  color: var(--text-sub);
+}
+
+.panel {
+  border: 4px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(19, 19, 19, 0.95), rgba(10, 10, 10, 0.95));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  padding: 18px;
+}
+
+.panel-forms {
+  max-width: 1020px;
+  margin: 0 auto;
+}
+
+.forms-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card {
+  background: linear-gradient(180deg, var(--bg-card), #111);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.card h2,
+.status-card h3 {
+  margin-top: 0;
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.04em;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+label {
+  color: var(--text-sub);
+  font-size: 0.95rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input,
+select {
+  width: 100%;
+  background: #1f1f1f;
+  border: 1px solid #363636;
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+input[type='range'] {
+  accent-color: var(--accent);
+}
+
+button {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  padding: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #150d00;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+button.join {
+  background: linear-gradient(90deg, #ff9c32, #ffc977);
+}
+
+button.start {
+  width: auto;
+  min-width: 180px;
+}
+
+.room-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.room-label {
+  margin: 0;
+  color: var(--text-sub);
+}
+
+.room-head h2 {
+  margin: 0;
+  font-family: 'Cinzel', serif;
+  font-size: 2rem;
+  letter-spacing: 0.08em;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.status-card {
+  background: #121212;
+  border: 1px solid #292929;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.92rem;
+  padding: 4px 0;
+  border-bottom: 1px dashed #2d2d2d;
+}
+
+.player-row:last-child {
+  border-bottom: none;
+}
+
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid #000;
+}
+
+.game-canvas {
+  display: block;
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  border-radius: 8px;
+}
+
+.render-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 2px 12px;
+  color: var(--text-sub);
+  font-size: 0.92rem;
+}
+
+.render-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.render-toggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.waiting,
+.error {
+  text-align: center;
+}
+
+.error {
+  color: var(--error);
+  margin-top: 8px;
+}
+
+@media (max-width: 960px) {
+  .forms-grid,
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .room-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .render-toggle {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  button.start {
+    width: 100%;
+  }
+}
