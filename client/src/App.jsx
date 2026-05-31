@@ -286,6 +286,19 @@ export default function App() {
     }
 
     if (prev) {
+      if (prev.exit?.locked && snapshot.exit && !snapshot.exit.locked) {
+        soundManager.play(SOUND.DOOR_UNLOCK);
+      }
+
+      for (const player of snapshot.players || []) {
+        if (!player.socketId) continue;
+        const prevPlayer = prev.players?.find((p) => p.id === player.id);
+        if (prevPlayer?.dead === 1 && player.dead === 0) {
+          soundManager.play(SOUND.REVIVAL);
+          break;
+        }
+      }
+
       if ((snapshot.traps?.length || 0) > (prev.traps?.length || 0)) {
         soundManager.play(SOUND.DOOR);
       }

@@ -39,6 +39,7 @@ export class GameEngine {
     this.enableRadar = false;
     this.enableMapView = false;
     this.maxSightDistance = SERVER_CONFIG.vision.maxSightDistance;
+    this.nextGhostId = 1;
 
     this.tickMs = 0;
     this._buildCells();
@@ -202,6 +203,7 @@ export class GameEngine {
     for (let i = 0; i < total; i++) {
       if (Math.random() < SERVER_CONFIG.ghost.spawnChance) {
         this.ghosts.push({
+          ghostId: this.nextGhostId++,
           x: randInt(Math.floor(this.cols / 4), this.cols),
           y: randInt(0, this.rows),
           cx: 0,
@@ -370,7 +372,12 @@ export class GameEngine {
       this._lerpEntity(ghost, dtMs);
 
       if (ghost.fall) {
-        ghost.dead = true;
+        ghost.diameter = Math.max(0, ghost.diameter - dtMs * 0.00065);
+        if (ghost.diameter <= 0.05) {
+          this._updateKeyOwnerOnGhostDeath(ghost);
+          ghost.dead = true;
+          this._spawnHealParticles(ghost.cx, ghost.cy, ghost.crazy ? '#d8d8d8' : '#a5a5a5', 12, 0.75);
+        }
         continue;
       }
 
@@ -404,6 +411,7 @@ export class GameEngine {
 
       this._checkPortalFor(ghost);
       this._checkTrapFor(ghost);
+      this._checkKeyPickup(ghost);
     }
 
     this.ghosts = this.ghosts.filter((g) => !g.dead);
@@ -558,8 +566,23 @@ export class GameEngine {
         entity.fy = portal.y;
         entity.cx = portal.x;
         entity.cy = portal.y;
+        this._checkKeyPickup(entity);
         return;
       }
+    }
+  }
+
+  _checkKeyPickup(entity) {
+    if (!this.keyOwner || this.keyOwner.type !== 'cell') return;
+    if (this.keyOwner.x !== entity.x || this.keyOwner.y !== entity.y) return;
+
+    if (entity.id) {
+      this.keyOwner = { type: 'player', playerId: entity.id };
+      return;
+    }
+
+    if (entity.ghostId) {
+      this.keyOwner = { type: 'ghost', ghostId: entity.ghostId };
     }
   }
 
@@ -583,6 +606,11 @@ export class GameEngine {
   _updateKeyOwnerOnDeath(player) {
     if (!this.keyOwner || this.keyOwner.type !== 'player' || this.keyOwner.playerId !== player.id) return;
     this.keyOwner = { type: 'cell', x: Math.round(player.cx), y: Math.round(player.cy) };
+  }
+
+  _updateKeyOwnerOnGhostDeath(ghost) {
+    if (!this.keyOwner || this.keyOwner.type !== 'ghost' || this.keyOwner.ghostId !== ghost.ghostId) return;
+    this.keyOwner = { type: 'cell', x: Math.round(ghost.cx), y: Math.round(ghost.cy) };
   }
 
   _relocateDownedPlayer(player) {
@@ -710,9 +738,7 @@ export class GameEngine {
       return;
     }
 
-    if (entity.id && this.keyOwner?.type === 'cell' && this.keyOwner.x === entity.x && this.keyOwner.y === entity.y) {
-      this.keyOwner = { type: 'player', playerId: entity.id };
-    }
+    this._checkKeyPickup(entity);
   }
 
   _allPlayersInactive() {
@@ -875,12 +901,15 @@ export class GameEngine {
         hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id
       })),
       ghosts: this.ghosts.map((g) => ({
+        id: g.ghostId,
         x: g.x,
         y: g.y,
         cx: g.cx,
         cy: g.cy,
+        diameter: g.diameter,
+        fall: g.fall,
         crazy: g.crazy,
-        hasKey: false
+        hasKey: this.keyOwner?.type === 'ghost' && this.keyOwner.ghostId === g.ghostId
       })),
       portals: this.portals.map((p) => ({
         x: p.x,
@@ -913,6 +942,11 @@ export class GameEngine {
     if (!this.keyOwner) return null;
     if (this.keyOwner.type === 'cell') {
       return { type: 'cell', x: this.keyOwner.x, y: this.keyOwner.y };
+    }
+    if (this.keyOwner.type === 'ghost') {
+      const ghostOwner = this.ghosts.find((g) => g.ghostId === this.keyOwner.ghostId);
+      if (!ghostOwner) return null;
+      return { type: 'ghost', ghostId: ghostOwner.ghostId, x: ghostOwner.cx, y: ghostOwner.cy };
     }
     const owner = this.players.find((p) => p.id === this.keyOwner.playerId);
     if (!owner) return null;
