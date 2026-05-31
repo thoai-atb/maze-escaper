@@ -1,3 +1,5 @@
+import { TILE_COLOR_CONFIG } from '../config';
+
 function fillRect(ctx, x, y, w, h, color) {
   ctx.fillStyle = color;
   ctx.fillRect(x, y, w, h);
@@ -69,15 +71,21 @@ function drawKey(ctx, x, y, unit, scale = 1) {
   ctx.restore();
 }
 
-function cellColor(bright, type, enabled) {
-  const base = Math.max(8, Math.min(95, bright));
+function cellColor(bright, type, enabled, explored) {
+  const base = Math.max(TILE_COLOR_CONFIG.brightness.min, Math.min(TILE_COLOR_CONFIG.brightness.max, bright));
+
+  const toHsl = (palette) => `hsl(${palette.hue} ${palette.saturation}% ${base * palette.lightnessScale}%)`;
+
   if (type === 1) {
-    return enabled ? `hsl(138 78% ${base * 0.5}%)` : `hsl(188 76% ${base * 0.42}%)`;
+    return enabled ? toHsl(TILE_COLOR_CONFIG.radar.active) : toHsl(TILE_COLOR_CONFIG.radar.inactive);
   }
   if (type === 2) {
-    return enabled ? `hsl(140 76% ${base * 0.52}%)` : `hsl(190 72% ${base * 0.44}%)`;
+    return enabled ? toHsl(TILE_COLOR_CONFIG.map.active) : toHsl(TILE_COLOR_CONFIG.map.inactive);
   }
-  return `hsl(33 100% ${base * 0.4}%)`;
+  if (!explored) {
+    return toHsl(TILE_COLOR_CONFIG.unvisited);
+  }
+  return toHsl(TILE_COLOR_CONFIG.normal);
 }
 
 function drawCellGlyph(ctx, cell, x, y, unit, stroke) {
@@ -414,7 +422,13 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
   for (const cell of snapshot.cells) {
     if (!cell.inSight) continue;
     if (cell.bright <= snapshot.minBright && !snapshot.finish) continue;
-    fillCellRect(ctx, cell.x, cell.y, unit, cellColor(cell.bright, cell.type, cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView));
+    fillCellRect(
+      ctx,
+      cell.x,
+      cell.y,
+      unit,
+      cellColor(cell.bright, cell.type, cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView, cell.explored)
+    );
     const x = cell.x * unit;
     const y = cell.y * unit;
     drawCellGlyph(ctx, cell, x, y, unit, stroke);
@@ -521,8 +535,8 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     ctx.save();
     ctx.translate(cx, cy);
     const glow = ctx.createRadialGradient(0, 0, unit * 0.04, 0, 0, glowRadius);
-    glow.addColorStop(0, 'rgba(0, 222, 255, 0.22)');
-    glow.addColorStop(0.55, charging ? 'rgba(0, 222, 255, 0.06)' : 'rgba(0, 222, 255, 0.12)');
+    glow.addColorStop(0, 'rgba(174, 96, 255, 0.22)');
+    glow.addColorStop(0.55, charging ? 'rgba(174, 96, 255, 0.06)' : 'rgba(174, 96, 255, 0.12)');
     glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
@@ -530,7 +544,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     ctx.fill();
 
     ctx.rotate(spin);
-    ctx.strokeStyle = 'rgba(0, 222, 255, 0.82)';
+    ctx.strokeStyle = 'rgba(196, 126, 255, 0.82)';
     ctx.lineWidth = stroke / 2;
     ctx.lineCap = 'round';
     ctx.fillStyle = '#000';
@@ -603,6 +617,10 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     ctx.arc(0, 0, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+
+    if (ghost.hasKey) {
+      drawKey(ctx, ghost.cx * unit, ghost.cy * unit, unit, 0.45);
+    }
   }
 
   if (snapshot.exit) {

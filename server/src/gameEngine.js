@@ -82,6 +82,7 @@ export class GameEngine {
           type,
           inSight: false,
           bright: 0,
+          explored: false,
           wallT: null,
           wallB: null,
           wallL: null,
@@ -307,6 +308,10 @@ export class GameEngine {
     for (const player of this.players) {
       this._lerpEntity(player, dtMs);
 
+      if (player.socketId && !player.escaped && player.dead === 0) {
+        this._markCellExplored(player.x, player.y);
+      }
+
       if (player.fall) {
         player.diameter = Math.max(0, player.diameter - dtMs * 0.0008);
         if (player.diameter <= 0.05) {
@@ -346,6 +351,7 @@ export class GameEngine {
           const oldY = player.y;
           if (this._canMove(player, move, true)) {
             this._applyMove(player, move);
+            this._markCellExplored(player.x, player.y);
             this._arrangePlayersAt(oldX, oldY);
             this._arrangePlayersAt(player.x, player.y);
           }
@@ -566,10 +572,16 @@ export class GameEngine {
         entity.fy = portal.y;
         entity.cx = portal.x;
         entity.cy = portal.y;
+        if (entity.id) this._markCellExplored(entity.x, entity.y);
         this._checkKeyPickup(entity);
         return;
       }
     }
+  }
+
+  _markCellExplored(x, y) {
+    const cell = this._getCell(x, y);
+    if (cell) cell.explored = true;
   }
 
   _checkKeyPickup(entity) {
@@ -877,7 +889,8 @@ export class GameEngine {
         y: c.y,
         type: c.type,
         inSight: c.inSight,
-        bright: c.bright
+        bright: c.bright,
+        explored: c.explored
       })),
       walls: this.walls.map((w) => ({
         p1: w.p1,
