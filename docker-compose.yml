@@ -1,0 +1,13 @@
+services:
+  maze:
+    image: thoai495/maze-escaper
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maze
+    ports:
+      - "11142:11142"
+    environment:
+      PORT: "11142"
+      NODE_ENV: production
+    restart: unless-stopped

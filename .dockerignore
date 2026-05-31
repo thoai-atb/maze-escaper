@@ -1,0 +1,8 @@
+node_modules
+**/node_modules
+.git
+.gitignore
+npm-debug.log*
+client/dist
+Maze_Escaper_2026_05_31_03_06_54
+Maze_Escaper_2026_05_31_03_06_54.zip

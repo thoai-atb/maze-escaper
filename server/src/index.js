@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { customAlphabet } from 'nanoid';
@@ -9,6 +11,18 @@ import { SERVER_CONFIG } from './config.js';
 const app = express();
 app.use(cors());
 app.get('/health', (_, res) => res.json({ ok: true }));
+
+const clientDistPath = path.resolve(process.cwd(), 'client', 'dist');
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/socket.io')) {
+      next();
+      return;
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {

@@ -145,8 +145,10 @@ export default function App() {
     return saved == null ? true : saved === 'true';
   });
   const [soundVolume, setSoundVolume] = useState(() => {
-    const saved = Number(window.localStorage.getItem('maze.sound.volume'));
-    if (Number.isNaN(saved)) return 0.5;
+    const savedRaw = window.localStorage.getItem('maze.sound.volume');
+    if (savedRaw == null) return 0.4;
+    const saved = Number(savedRaw);
+    if (Number.isNaN(saved)) return 0.4;
     return Math.max(0, Math.min(1, saved));
   });
 
