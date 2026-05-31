@@ -400,6 +400,7 @@ io.on('connection', (socket) => {
     const nextEngine = GameEngine.fromExistingRoom(room, { advanceLevel: true });
     room.failurePenaltyApplied = false;
     room.levelAttempts[nextLevel] = 1;
+    room.remainingLives = INITIAL_LIVES;
     room.roundStartedAt = Date.now();
     room.roundFinishedAt = 0;
     room.resultsOpened = false;

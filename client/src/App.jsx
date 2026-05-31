@@ -12,6 +12,8 @@ const initialInput = {
   trap: false
 };
 
+const PLAYER_NAME_STORAGE_KEY = 'maze.player.name';
+
 function getViewportSize() {
   const visual = window.visualViewport;
   if (visual) {
@@ -119,7 +121,10 @@ export default function App() {
     height: getViewportSize().height
   });
   const [mySocketId, setMySocketId] = useState('');
-  const [myName, setMyName] = useState('');
+  const [myName, setMyName] = useState(() => {
+    const saved = window.localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
+    return saved ? saved.slice(0, 20) : '';
+  });
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(6);
 
@@ -348,6 +353,10 @@ export default function App() {
   }, [soundEnabled, soundVolume]);
 
   useEffect(() => {
+    window.localStorage.setItem(PLAYER_NAME_STORAGE_KEY, myName.trim().slice(0, 20));
+  }, [myName]);
+
+  useEffect(() => {
     if (!started || !snapshot) {
       prevSnapshotRef.current = null;
       prevMapGadgetRef.current = false;
@@ -409,10 +418,16 @@ export default function App() {
   }, [hasMapGadget, hasRadarGadget, mySocketId, snapshot, started]);
 
   const createRoom = () => {
+    const enteredName = myName.trim();
+    if (!enteredName) {
+      setError('Please enter your name before creating or joining a room.');
+      return;
+    }
+
     socket.emit(
       'room:create',
       {
-        name: myName,
+        name: enteredName,
         maxPlayers
       },
       (res) => {
@@ -426,11 +441,17 @@ export default function App() {
   };
 
   const joinRoom = () => {
+    const enteredName = myName.trim();
+    if (!enteredName) {
+      setError('Please enter your name before creating or joining a room.');
+      return;
+    }
+
     socket.emit(
       'room:join',
       {
         roomCode: roomCodeInput,
-        name: myName
+        name: enteredName
       },
       (res) => {
         if (!res?.ok) {
@@ -443,11 +464,17 @@ export default function App() {
   };
 
   const joinRoomByCode = (targetCode) => {
+    const enteredName = myName.trim();
+    if (!enteredName) {
+      setError('Please enter your name before creating or joining a room.');
+      return;
+    }
+
     socket.emit(
       'room:join',
       {
         roomCode: targetCode,
-        name: myName
+        name: enteredName
       },
       (res) => {
         if (!res?.ok) {
@@ -500,6 +527,7 @@ export default function App() {
   };
 
   const inRoom = Boolean(roomCode);
+  const hasValidName = Boolean(myName.trim());
   const isHost = mySocketId && hostSocketId === mySocketId;
   const connectedPlayers = (roomStatus?.players || []).filter((p) => p.connected);
   const roomLevel = roomStatus?.level || 1;
@@ -704,8 +732,11 @@ export default function App() {
               value={myName}
               onChange={(e) => setMyName(e.target.value.slice(0, 20))}
               placeholder="Your name"
+              required
+              aria-invalid={!hasValidName}
             />
           </div>
+          {!hasValidName && <p className="error">Please enter your name before creating or joining a room.</p>}
 
           <div className="forms-grid">
             <article className="card">
@@ -722,7 +753,7 @@ export default function App() {
                   <option value={6}>6</option>
                 </select>
               </div>
-              <button onClick={createRoom}>Create</button>
+              <button onClick={createRoom} disabled={!hasValidName}>Create</button>
             </article>
 
             <article className="card">
@@ -735,7 +766,7 @@ export default function App() {
                   placeholder="ABC123"
                 />
               </div>
-              <button className="join" onClick={joinRoom}>Join</button>
+              <button className="join" onClick={joinRoom} disabled={!hasValidName}>Join</button>
             </article>
 
             <article className="card room-browser-card">
@@ -756,7 +787,7 @@ export default function App() {
                           {r.hostName || 'Host'} • Players {r.connectedPlayers}/{r.maxPlayers}
                         </div>
                       </div>
-                      <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)}>
+                      <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)} disabled={!hasValidName}>
                         Join
                       </button>
                     </div>
