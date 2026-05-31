@@ -25,6 +25,12 @@ const INPUT_QUEUE_MAX = 24;
 const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
 const INITIAL_LIVES = 3;
 
+function getRoundDurationMs(room, now = Date.now()) {
+  if (!room.roundStartedAt) return 0;
+  const effectiveNow = room.roundFinishedAt || now;
+  return Math.max(0, effectiveNow - room.roundStartedAt);
+}
+
 function getPublicRoomList() {
   const list = [];
   for (const room of rooms.values()) {
@@ -73,7 +79,8 @@ function recordLevelOutcome(room) {
   const level = engine.level;
   const attempts = room.levelAttempts[level] || 1;
   const players = getResultPlayers(room, engine);
-  room.levelHistory.push({ level, attempts, players });
+  const durationMs = getRoundDurationMs(room);
+  room.levelHistory.push({ level, attempts, durationMs, players });
 }
 
 function getLevelResults(room) {
@@ -84,7 +91,8 @@ function getLevelResults(room) {
   if (!alreadyRecorded && room.engine.finish) {
     const attempts = room.levelAttempts[currentLevel] || 1;
     const players = getResultPlayers(room, room.engine);
-    levelHistory.push({ level: currentLevel, attempts, players });
+    const durationMs = getRoundDurationMs(room);
+    levelHistory.push({ level: currentLevel, attempts, durationMs, players });
   }
 
   return levelHistory;
@@ -102,6 +110,8 @@ function createRoom({ hostSocketId, hostName, maxPlayers }) {
     engine,
     levelHistory: [],
     levelAttempts: { 1: 1 },
+    roundStartedAt: 0,
+    roundFinishedAt: 0,
     resultPlayerIds: [],
     remainingLives: INITIAL_LIVES,
     failurePenaltyApplied: false
@@ -274,6 +284,8 @@ io.on('connection', (socket) => {
     room.resultPlayerIds = room.engine.getConnectedPlayers().map((player) => player.id);
     room.remainingLives = INITIAL_LIVES;
     room.failurePenaltyApplied = false;
+    room.roundStartedAt = Date.now();
+    room.roundFinishedAt = 0;
     room.started = true;
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -314,6 +326,8 @@ io.on('connection', (socket) => {
     const nextEngine = GameEngine.fromExistingRoom(room, { advanceLevel: false });
     room.failurePenaltyApplied = false;
     room.levelAttempts[currentLevel] = (room.levelAttempts[currentLevel] || 1) + 1;
+    room.roundStartedAt = Date.now();
+    room.roundFinishedAt = 0;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -355,6 +369,8 @@ io.on('connection', (socket) => {
     const nextEngine = GameEngine.fromExistingRoom(room, { advanceLevel: true });
     room.failurePenaltyApplied = false;
     room.levelAttempts[nextLevel] = 1;
+    room.roundStartedAt = Date.now();
+    room.roundFinishedAt = 0;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -419,6 +435,10 @@ setInterval(() => {
 
     room.engine.update(dt, inputQueueBySocket);
     const snapshot = room.engine.getSnapshot();
+
+    if (snapshot.finish && !room.roundFinishedAt) {
+      room.roundFinishedAt = Date.now();
+    }
 
     if (snapshot.finish && !levelSucceeded(room.engine) && !room.failurePenaltyApplied) {
       room.remainingLives = Math.max(0, room.remainingLives - 1);

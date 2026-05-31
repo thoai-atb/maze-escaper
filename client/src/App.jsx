@@ -33,7 +33,7 @@ function keyToInput(key) {
   if (k === 'arrowdown' || k === 's') return 'down';
   if (k === 'arrowleft' || k === 'a') return 'left';
   if (k === 'arrowright' || k === 'd') return 'right';
-  if (k === 'q' || k === 'e' || k === ' ') return 'trap';
+  if (k === ' ') return 'trap';
   return null;
 }
 
@@ -43,6 +43,14 @@ function levelTileColor(level, alpha = 1) {
   return alpha === 1
     ? `hsl(${theme.hue} ${theme.saturation}% ${lightness}%)`
     : `hsl(${theme.hue} ${theme.saturation}% ${lightness}% / ${alpha})`;
+}
+
+function formatRoundDuration(ms) {
+  const safeMs = Math.max(0, Number(ms) || 0);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function SoundIcon({ muted }) {
@@ -92,8 +100,6 @@ function ControlsLegend({ showRoundKeys = true }) {
       </span>
       <span className="control-item">
         <span className="keycap-row">
-          <KeyCap label="Q" />
-          <KeyCap label="E" />
           <KeyCap label="Space" />
         </span>
         <span>Trap</span>
@@ -484,10 +490,17 @@ export default function App() {
   const levelActionLabel = allLevelsCleared || outOfLives ? 'View Results' : levelSucceeded ? 'Next Level' : 'Restart Level';
   const cheatEnabled = Boolean(snapshot?.cheatEnabled);
   const showLevelActionButton = Boolean(snapshot?.finish);
+  const showResultActionForAll = allLevelsCleared || outOfLives;
   const roomRows = roomStatus?.rows || 0;
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
+
+  useEffect(() => {
+    if (showLevelActionButton && showResultActionForAll) {
+      setShowResults(true);
+    }
+  }, [showLevelActionButton, showResultActionForAll]);
 
   const finishButtonMetrics = useMemo(() => {
     const width = viewportSize.width;
@@ -570,7 +583,7 @@ export default function App() {
             overlayHeight={roundOverlayHeight}
           />
         </div>
-        {showLevelActionButton && isHost && (
+        {showLevelActionButton && (isHost || showResultActionForAll) && (
           <button
             className="round-restart-finish"
             onClick={() => {
@@ -582,7 +595,7 @@ export default function App() {
                 restartLevel();
               }
             }}
-            disabled={!isHost}
+            disabled={!isHost && !showResultActionForAll}
             title={levelActionLabel}
             style={{ top: `${finishButtonMetrics.top}px`, width: `${finishButtonMetrics.width}px` }}
           >
@@ -594,7 +607,9 @@ export default function App() {
         {showResults && (
           <div className="results-overlay">
             <div className="results-panel">
-              <h2 className="results-title">Highest level reached: {highestLevelReached}</h2>
+              <h2 className="results-title">
+                {highestLevelReached >= 5 ? 'All level finished 🏆' : `Highest level reached: ${highestLevelReached}`}
+              </h2>
               <div className="results-levels">
                 {[1, 2, 3, 4, 5].map((lvl) => {
                   const entry = levelHistory.find((h) => h.level === lvl);
@@ -613,16 +628,21 @@ export default function App() {
                       <div className="results-level-header">
                         <span className="results-level-badge">Level {lvl}</span>
                         {entry && (
-                          <>
-                            <span className="results-attempts">
-                              {entry.attempts === 1 ? '1 attempt' : `${entry.attempts} attempts`}
-                            </span>
-                            <span className="results-deaths">
-                              {deaths === 1 ? '1 death' : `${deaths} deaths`}
-                            </span>
-                          </>
+                          <span className="results-attempts">
+                            {entry.attempts === 1 ? '1 attempt' : `${entry.attempts} attempts`}
+                          </span>
                         )}
                       </div>
+                      {entry && (
+                        <div className="results-level-stats">
+                          <span className="results-time">
+                            {formatRoundDuration(entry.durationMs)}
+                          </span>
+                          <span className="results-deaths">
+                            {deaths === 1 ? '1 death' : `${deaths} deaths`}
+                          </span>
+                        </div>
+                      )}
                       {entry ? (
                         <div className="results-players">
                           {entry.players.map((p) => (
