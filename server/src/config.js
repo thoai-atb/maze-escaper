@@ -10,7 +10,7 @@ export const SERVER_CONFIG = {
   },
   player: {
     moveCooldownMs: 90, // Increase -> slower/chunkier player stepping. Decrease -> faster/more continuous stepping.
-    reviveMs: 5000, // Increase -> longer revive time. Decrease -> faster revive.
+    reviveMs: 2500, // Increase -> longer revive time. Decrease -> faster revive.
     trapCooldownMs: 250, // Increase -> traps placed less often. Decrease -> traps placed more often.
     sameTileSpread: 0.1 // Increase -> players on same tile are displayed farther apart. Decrease -> closer together.
   },
@@ -38,5 +38,10 @@ export const SERVER_CONFIG = {
   },
   finish: {
     fadePerSecond: 100 // Increase -> faster end-round fade to full visibility. Decrease -> slower fade.
+  },
+  level: {
+    min: 1, // First level number.
+    max: 5, // Last level number. Increase -> more levels before game ends.
+    rowSteps: [10, 10, 10, 10, 10] // Maze row count per level. Add entries when adding levels; cols = rows * 2.
   }
 };

@@ -20,7 +20,10 @@ const io = new Server(httpServer, {
 const nanoid = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6);
 const rooms = new Map();
 const socketRoom = new Map();
-const inputStateBySocket = new Map();
+const inputQueueBySocket = new Map();
+const INPUT_QUEUE_MAX = 24;
+const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
+const INITIAL_LIVES = 3;
 
 function getPublicRoomList() {
   const list = [];
@@ -32,6 +35,7 @@ function getPublicRoomList() {
       roomCode: room.roomCode,
       hostSocketId: room.hostSocketId,
       hostName: status.players.find((p) => p.socketId === room.hostSocketId)?.name || 'Host',
+      level: room.engine.level,
       rows: room.engine.rows,
       cols: room.engine.cols,
       maxPlayers: room.engine.maxPlayers,
@@ -48,16 +52,59 @@ function emitRoomList() {
   io.emit('room:list:update', { rooms: getPublicRoomList() });
 }
 
-function createRoom({ hostSocketId, hostName, rows, maxPlayers }) {
+function getResultPlayers(room, engine = room.engine) {
+  const participantIds = room.resultPlayerIds?.length
+    ? new Set(room.resultPlayerIds)
+    : new Set(engine.getConnectedPlayers().map((player) => player.id));
+
+  return engine.players
+    .filter((player) => participantIds.has(player.id))
+    .map((player) => ({
+      id: player.id,
+      name: player.name,
+      color: player.color,
+      escaped: Boolean(player.escaped),
+      dead: player.dead
+    }));
+}
+
+function recordLevelOutcome(room) {
+  const engine = room.engine;
+  const level = engine.level;
+  const attempts = room.levelAttempts[level] || 1;
+  const players = getResultPlayers(room, engine);
+  room.levelHistory.push({ level, attempts, players });
+}
+
+function getLevelResults(room) {
+  const levelHistory = [...room.levelHistory];
+  const currentLevel = room.engine.level;
+  const alreadyRecorded = levelHistory.some((entry) => entry.level === currentLevel);
+
+  if (!alreadyRecorded && room.engine.finish) {
+    const attempts = room.levelAttempts[currentLevel] || 1;
+    const players = getResultPlayers(room, room.engine);
+    levelHistory.push({ level: currentLevel, attempts, players });
+  }
+
+  return levelHistory;
+}
+
+function createRoom({ hostSocketId, hostName, maxPlayers }) {
   const roomCode = nanoid();
-  const engine = new GameEngine({ rows, maxPlayers });
+  const engine = new GameEngine({ level: 1, maxPlayers });
   const createdAt = Date.now();
   const room = {
     roomCode,
     createdAt,
     hostSocketId,
     started: false,
-    engine
+    engine,
+    levelHistory: [],
+    levelAttempts: { 1: 1 },
+    resultPlayerIds: [],
+    remainingLives: INITIAL_LIVES,
+    failurePenaltyApplied: false
   };
 
   const attached = engine.attachPlayer(hostSocketId, hostName || 'Host');
@@ -93,7 +140,7 @@ function leaveCurrentRoom(socketId) {
 
   const room = rooms.get(roomCode);
   socketRoom.delete(socketId);
-  inputStateBySocket.delete(socketId);
+  inputQueueBySocket.delete(socketId);
   if (!room) return;
 
   room.engine.detachPlayer(socketId);
@@ -105,7 +152,10 @@ function leaveCurrentRoom(socketId) {
 
   io.to(roomCode).emit('room:update', {
     roomCode,
-    status: room.engine.getRoomStatus(),
+    status: {
+      ...room.engine.getRoomStatus(),
+      remainingLives: room.remainingLives
+    },
     hostSocketId: room.hostSocketId,
     started: room.started
   });
@@ -137,6 +187,10 @@ function removeSocketFromRoom(socket) {
   leaveCurrentRoom(socket.id);
 }
 
+function levelSucceeded(engine) {
+  return engine.players.some((player) => player.escaped);
+}
+
 io.on('connection', (socket) => {
   socket.emit('welcome', { socketId: socket.id });
   socket.emit('room:list:update', { rooms: getPublicRoomList() });
@@ -152,7 +206,6 @@ io.on('connection', (socket) => {
       const room = createRoom({
         hostSocketId: socket.id,
         hostName: payload?.name || 'Host',
-        rows: Number(payload?.rows || 10),
         maxPlayers: Number(payload?.maxPlayers || 6)
       });
 
@@ -218,10 +271,16 @@ io.on('connection', (socket) => {
       return;
     }
 
+    room.resultPlayerIds = room.engine.getConnectedPlayers().map((player) => player.id);
+    room.remainingLives = INITIAL_LIVES;
+    room.failurePenaltyApplied = false;
     room.started = true;
     io.to(roomCode).emit('game:start', {
       roomCode,
-      status: room.engine.getRoomStatus()
+      status: {
+        ...room.engine.getRoomStatus(),
+        remainingLives: room.remainingLives
+      }
     });
     emitRoomUpdate(roomCode);
     emitRoomList();
@@ -246,11 +305,63 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const nextEngine = GameEngine.fromExistingRoom(room);
+    if (room.remainingLives <= 0) {
+      cb?.({ ok: false, error: 'No lives remaining.' });
+      return;
+    }
+
+    const currentLevel = room.engine.level;
+    const nextEngine = GameEngine.fromExistingRoom(room, { advanceLevel: false });
+    room.failurePenaltyApplied = false;
+    room.levelAttempts[currentLevel] = (room.levelAttempts[currentLevel] || 1) + 1;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
-      status: nextEngine.getRoomStatus()
+      status: {
+        ...nextEngine.getRoomStatus(),
+        remainingLives: room.remainingLives
+      }
+    });
+    emitRoomUpdate(roomCode);
+    emitRoomList();
+    cb?.({ ok: true });
+  });
+
+  socket.on('room:next-level', (cb) => {
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) {
+      cb?.({ ok: false, error: 'Not in a room.' });
+      return;
+    }
+
+    const room = rooms.get(roomCode);
+    if (!room) {
+      cb?.({ ok: false, error: 'Room not found.' });
+      return;
+    }
+
+    if (room.hostSocketId !== socket.id) {
+      cb?.({ ok: false, error: 'Only host can go next level.' });
+      return;
+    }
+
+    if (!levelSucceeded(room.engine)) {
+      cb?.({ ok: false, error: 'Need at least one escaped player to unlock next level.' });
+      return;
+    }
+
+    recordLevelOutcome(room);
+    const nextLevel = room.engine.level + 1;
+    const nextEngine = GameEngine.fromExistingRoom(room, { advanceLevel: true });
+    room.failurePenaltyApplied = false;
+    room.levelAttempts[nextLevel] = 1;
+
+    io.to(roomCode).emit('game:start', {
+      roomCode,
+      status: {
+        ...nextEngine.getRoomStatus(),
+        remainingLives: room.remainingLives
+      }
     });
     emitRoomUpdate(roomCode);
     emitRoomList();
@@ -263,14 +374,33 @@ io.on('connection', (socket) => {
     cb?.({ ok: true });
   });
 
-  socket.on('input:update', (payload) => {
-    inputStateBySocket.set(socket.id, {
-      up: Boolean(payload?.up),
-      down: Boolean(payload?.down),
-      left: Boolean(payload?.left),
-      right: Boolean(payload?.right),
-      trap: Boolean(payload?.trap)
-    });
+  socket.on('room:toggle-cheat', (cb) => {
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) {
+      cb?.({ ok: false, error: 'Not in a room.' });
+      return;
+    }
+
+    const room = rooms.get(roomCode);
+    if (!room) {
+      cb?.({ ok: false, error: 'Room not found.' });
+      return;
+    }
+
+    room.engine.cheatEnabled = !room.engine.cheatEnabled;
+    cb?.({ ok: true, cheatEnabled: room.engine.cheatEnabled });
+  });
+
+  socket.on('input:enqueue', (payload) => {
+    const action = String(payload?.action || '').toLowerCase();
+    if (!VALID_INPUT_ACTIONS.has(action)) return;
+
+    const queue = inputQueueBySocket.get(socket.id) || [];
+    if (queue.length >= INPUT_QUEUE_MAX) {
+      queue.shift();
+    }
+    queue.push(action);
+    inputQueueBySocket.set(socket.id, queue);
   });
 
   socket.on('disconnect', () => {
@@ -287,12 +417,26 @@ setInterval(() => {
   for (const [roomCode, room] of rooms.entries()) {
     if (!room.started) continue;
 
-    room.engine.update(dt, inputStateBySocket);
+    room.engine.update(dt, inputQueueBySocket);
     const snapshot = room.engine.getSnapshot();
+
+    if (snapshot.finish && !levelSucceeded(room.engine) && !room.failurePenaltyApplied) {
+      room.remainingLives = Math.max(0, room.remainingLives - 1);
+      room.failurePenaltyApplied = true;
+      emitRoomUpdate(roomCode);
+    }
+
+    if (snapshot.finish) {
+      for (const player of room.engine.getConnectedPlayers()) {
+        if (player.socketId) inputQueueBySocket.delete(player.socketId);
+      }
+    }
 
     io.to(roomCode).emit('game:state', {
       roomCode,
-      snapshot
+      snapshot,
+      levelHistory: getLevelResults(room),
+      remainingLives: room.remainingLives
     });
   }
 }, SERVER_CONFIG.net.tickIntervalMs);

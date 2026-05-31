@@ -17,9 +17,23 @@ function keyOf(x, y, cols) {
   return y * cols + x;
 }
 
+const LEVEL_MIN = SERVER_CONFIG.level.min;
+const LEVEL_MAX = SERVER_CONFIG.level.max;
+const LEVEL_ROW_STEPS = SERVER_CONFIG.level.rowSteps;
+
+function normalizeLevel(level) {
+  return clamp(Number(level) || LEVEL_MIN, LEVEL_MIN, LEVEL_MAX);
+}
+
+function rowsForLevel(level) {
+  const normalized = normalizeLevel(level);
+  return LEVEL_ROW_STEPS[normalized - 1];
+}
+
 export class GameEngine {
-  constructor({ rows = 10, maxPlayers = 6 }) {
-    this.rows = clamp(rows, 6, 20);
+  constructor({ level = 1, maxPlayers = 6, cheatEnabled = false }) {
+    this.level = normalizeLevel(level);
+    this.rows = rowsForLevel(this.level);
     this.cols = this.rows * 2;
     this.maxPlayers = clamp(maxPlayers, 1, 6);
 
@@ -35,6 +49,7 @@ export class GameEngine {
     this.exitLocked = true;
     this.finish = false;
     this.minBright = 0;
+    this.cheatEnabled = Boolean(cheatEnabled);
 
     this.enableRadar = false;
     this.enableMapView = false;
@@ -51,9 +66,12 @@ export class GameEngine {
     this._updateVision();
   }
 
-  static fromExistingRoom(room) {
+  static fromExistingRoom(room, options = {}) {
     const prev = room.engine;
-    const next = new GameEngine({ rows: prev.rows, maxPlayers: prev.maxPlayers });
+    const shouldAdvanceLevel = Boolean(options.advanceLevel);
+    const baseLevel = prev.level || LEVEL_MIN;
+    const nextLevel = shouldAdvanceLevel ? normalizeLevel(baseLevel + 1) : normalizeLevel(baseLevel);
+    const next = new GameEngine({ level: nextLevel, maxPlayers: prev.maxPlayers, cheatEnabled: prev.cheatEnabled });
 
     for (const prevPlayer of prev.players) {
       if (!prevPlayer.socketId) continue;
@@ -266,7 +284,7 @@ export class GameEngine {
     return this.players.every((p) => !p.socketId);
   }
 
-  update(dtMs, inputBySocket) {
+  update(dtMs, inputQueueBySocket) {
     this.tickMs += dtMs;
 
     for (const p of this.portals) {
@@ -282,7 +300,7 @@ export class GameEngine {
       }
     }
 
-    this._updatePlayers(dtMs, inputBySocket);
+    this._updatePlayers(dtMs, inputQueueBySocket);
     this._updateGhosts(dtMs);
     this._updateTraps(dtMs);
     this._updateParticles(dtMs);
@@ -304,7 +322,7 @@ export class GameEngine {
     this._updateVision();
   }
 
-  _updatePlayers(dtMs, inputBySocket) {
+  _updatePlayers(dtMs, inputQueueBySocket) {
     for (const player of this.players) {
       this._lerpEntity(player, dtMs);
 
@@ -327,6 +345,7 @@ export class GameEngine {
       if (player.escaped || player.dead === 2) continue;
 
       if (player.dead === 1) {
+        this._checkTrapFor(player);
         if (this._hasActivePlayerAt(player.x, player.y)) {
           if (!player.reviveStartedAt) player.reviveStartedAt = this.tickMs;
           if (this.tickMs - player.reviveStartedAt >= SERVER_CONFIG.player.reviveMs) {
@@ -343,28 +362,33 @@ export class GameEngine {
 
       if (!player.socketId) continue;
 
-      const input = inputBySocket.get(player.socketId) || {};
-      const move = this._getMoveFromInput(input);
-      if (move) {
+      const inputQueue = inputQueueBySocket.get(player.socketId) || [];
+      const action = inputQueue[0];
+      if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
         if (this.tickMs - player.lastMoveAt >= SERVER_CONFIG.player.moveCooldownMs) {
           const oldX = player.x;
           const oldY = player.y;
-          if (this._canMove(player, move, true)) {
-            this._applyMove(player, move);
+          if (this._canMove(player, action, true)) {
+            this._applyMove(player, action);
             this._markCellExplored(player.x, player.y);
             this._arrangePlayersAt(oldX, oldY);
             this._arrangePlayersAt(player.x, player.y);
           }
           player.lastMoveAt = this.tickMs;
+          inputQueue.shift();
         }
-
-        // Edge-trigger movement: one key press -> one move attempt.
-        input[move] = false;
       }
 
-      if (input.trap && this.tickMs >= player.trapCooldownAt) {
-        this._placeTrap(player.x, player.y);
-        player.trapCooldownAt = this.tickMs + SERVER_CONFIG.player.trapCooldownMs;
+      if (action === 'trap') {
+        if (this.tickMs >= player.trapCooldownAt) {
+          this._placeTrap(player.x, player.y);
+          player.trapCooldownAt = this.tickMs + SERVER_CONFIG.player.trapCooldownMs;
+          inputQueue.shift();
+        }
+      }
+
+      if (action && action !== 'up' && action !== 'down' && action !== 'left' && action !== 'right' && action !== 'trap') {
+        inputQueue.shift();
       }
 
       this._checkUnlockExit(player);
@@ -403,6 +427,7 @@ export class GameEngine {
 
       for (const player of this.players) {
         if (player.dead || player.escaped) continue;
+        if (this.cheatEnabled) continue;
         if (Math.round(player.cx) === Math.round(ghost.cx) && Math.round(player.cy) === Math.round(ghost.cy)) {
           player.dead = 1;
           player.x = ghost.x;
@@ -537,7 +562,11 @@ export class GameEngine {
   }
 
   _checkTrapFor(entity) {
-    if (entity.dead || entity.escaped) return;
+    if (entity.escaped) return;
+    const isPlayer = Boolean(entity.id);
+    if (this.cheatEnabled && isPlayer) return;
+    const downedPlayer = typeof entity.dead === 'number' && entity.dead === 1;
+    if (entity.dead && !downedPlayer) return;
 
     const ex = Math.round(entity.cx);
     const ey = Math.round(entity.cy);
@@ -545,12 +574,18 @@ export class GameEngine {
     for (const trap of this.traps) {
       if (!trap.set || trap.timerMs <= 0) continue;
       if (trap.x === ex && trap.y === ey) {
+        trap.timerMs = 0;
+        if (downedPlayer) {
+          this._relocateDownedPlayer(entity);
+          entity.reviveStartedAt = 0;
+          return;
+        }
+
         entity.x = ex;
         entity.y = ey;
         entity.fx = ex;
         entity.fy = ey;
         entity.fall = true;
-        trap.timerMs = 0;
         return;
       }
     }
@@ -565,6 +600,8 @@ export class GameEngine {
     for (const portal of this.portals) {
       if (portal.activationMs > 0) continue;
       if (portal.x === ex && portal.y === ey) {
+        // Spawn portal particles at entry before relocating portal/entity.
+        this._spawnHealParticles(ex, ey, '#c58dff', 10, 1.15);
         this._teleportPortal(portal);
         entity.x = portal.x;
         entity.y = portal.y;
@@ -572,6 +609,8 @@ export class GameEngine {
         entity.fy = portal.y;
         entity.cx = portal.x;
         entity.cy = portal.y;
+        // Spawn portal particles again at exit location.
+        this._spawnHealParticles(entity.x, entity.y, '#c58dff', 12, 1.2);
         if (entity.id) this._markCellExplored(entity.x, entity.y);
         this._checkKeyPickup(entity);
         return;
@@ -812,8 +851,8 @@ export class GameEngine {
   }
 
   _updateVision() {
-    this.enableRadar = false;
-    this.enableMapView = false;
+    this.enableRadar = this.cheatEnabled;
+    this.enableMapView = this.cheatEnabled;
 
     for (const c of this.cells) {
       c.inSight = false;
@@ -871,9 +910,11 @@ export class GameEngine {
   getSnapshot() {
     const key = this._resolveKeyPosition();
     return {
+      level: this.level,
       rows: this.rows,
       cols: this.cols,
       finish: this.finish,
+      cheatEnabled: this.cheatEnabled,
       minBright: this.minBright,
       enableRadar: this.enableRadar,
       enableMapView: this.enableMapView,
@@ -908,6 +949,7 @@ export class GameEngine {
         y: p.y,
         cx: p.cx,
         cy: p.cy,
+        fall: p.fall,
         dead: p.dead,
         escaped: p.escaped,
         diameter: p.diameter,
@@ -977,7 +1019,9 @@ export class GameEngine {
     }));
 
     return {
+      level: this.level,
       rows: this.rows,
+      cols: this.cols,
       maxPlayers: this.maxPlayers,
       connected: players.filter((p) => p.connected).length,
       players

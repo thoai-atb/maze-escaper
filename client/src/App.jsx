@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { socket } from './socket';
 import GameCanvas from './game/GameCanvas';
 import { soundManager, SOUND } from './audio/soundManager';
+import { getTileThemeByLevel } from './config';
 
 const initialInput = {
   up: false,
@@ -11,6 +12,21 @@ const initialInput = {
   trap: false
 };
 
+function getViewportSize() {
+  const visual = window.visualViewport;
+  if (visual) {
+    return {
+      width: Math.round(visual.width),
+      height: Math.round(visual.height)
+    };
+  }
+
+  return {
+    width: document.documentElement.clientWidth || window.innerWidth,
+    height: document.documentElement.clientHeight || window.innerHeight
+  };
+}
+
 function keyToInput(key) {
   const k = key.toLowerCase();
   if (k === 'arrowup' || k === 'w') return 'up';
@@ -19,6 +35,14 @@ function keyToInput(key) {
   if (k === 'arrowright' || k === 'd') return 'right';
   if (k === 'q' || k === 'e' || k === ' ') return 'trap';
   return null;
+}
+
+function levelTileColor(level, alpha = 1) {
+  const theme = getTileThemeByLevel(level).unvisited;
+  const lightness = Math.round(theme.lightnessScale * 100);
+  return alpha === 1
+    ? `hsl(${theme.hue} ${theme.saturation}% ${lightness}%)`
+    : `hsl(${theme.hue} ${theme.saturation}% ${lightness}% / ${alpha})`;
 }
 
 function SoundIcon({ muted }) {
@@ -44,6 +68,16 @@ function KeyCap({ label }) {
   return <span className="keycap">{label}</span>;
 }
 
+function LivesBadge({ lives }) {
+  const count = Math.max(0, lives);
+  return (
+    <span className="round-level round-lives" title={`${count} lives remaining`}>
+      <span className="round-lives-hearts" aria-hidden="true">{'♥'.repeat(count) || '♡'}</span>
+      <span className="round-lives-text">{count}</span>
+    </span>
+  );
+}
+
 function ControlsLegend({ showRoundKeys = true }) {
   return (
     <span className="controls-legend">
@@ -64,38 +98,34 @@ function ControlsLegend({ showRoundKeys = true }) {
         </span>
         <span>Trap</span>
       </span>
-      {showRoundKeys && (
-        <>
-          <span className="control-item">
-            <span className="keycap-row">
-              <KeyCap label="R" />
-            </span>
-            <span>Restart</span>
-          </span>
-          <span className="control-item">
-            <span className="keycap-row">
-              <KeyCap label="L" />
-            </span>
-            <span>Lobby</span>
-          </span>
-        </>
-      )}
+      {showRoundKeys && null}
     </span>
   );
 }
 
+function CopyrightBadge() {
+  return <div className="copyright-badge">© Thoai Ly 2026</div>;
+}
+
 export default function App() {
+  const [viewportSize, setViewportSize] = useState({
+    width: getViewportSize().width,
+    height: getViewportSize().height
+  });
   const [mySocketId, setMySocketId] = useState('');
   const [myName, setMyName] = useState('');
   const [roomCodeInput, setRoomCodeInput] = useState('');
-  const [rows, setRows] = useState(10);
   const [maxPlayers, setMaxPlayers] = useState(6);
 
   const [roomCode, setRoomCode] = useState('');
   const [roomStatus, setRoomStatus] = useState(null);
   const [hostSocketId, setHostSocketId] = useState('');
   const [started, setStarted] = useState(false);
+  const [roundOverlayHeight, setRoundOverlayHeight] = useState(44);
   const [snapshot, setSnapshot] = useState(null);
+  const [levelHistory, setLevelHistory] = useState([]);
+  const [remainingLives, setRemainingLives] = useState(3);
+  const [showResults, setShowResults] = useState(false);
   const [error, setError] = useState('');
   const [publicRooms, setPublicRooms] = useState([]);
   const [inputState, setInputState] = useState(initialInput);
@@ -112,12 +142,16 @@ export default function App() {
   const prevSnapshotRef = useRef(null);
   const prevMapGadgetRef = useRef(false);
   const prevRadarGadgetRef = useRef(false);
+  const heldKeysRef = useRef(new Set());
+  const inputStateRef = useRef(initialInput);
+  const roundOverlayRef = useRef(null);
 
   useEffect(() => {
     const onWelcome = (data) => setMySocketId(data.socketId);
     const onRoomUpdate = (data) => {
       setRoomCode(data.roomCode);
       setRoomStatus(data.status);
+      if (typeof data.status?.remainingLives === 'number') setRemainingLives(data.status.remainingLives);
       setHostSocketId(data.hostSocketId || '');
       setStarted(Boolean(data.started));
       setError('');
@@ -128,6 +162,8 @@ export default function App() {
     };
     const onGameState = (data) => {
       setSnapshot(data.snapshot);
+      if (Array.isArray(data.levelHistory)) setLevelHistory(data.levelHistory);
+      if (typeof data.remainingLives === 'number') setRemainingLives(data.remainingLives);
     };
     const onRoomListUpdate = (data) => {
       setPublicRooms(Array.isArray(data?.rooms) ? data.rooms : []);
@@ -138,6 +174,9 @@ export default function App() {
       setHostSocketId('');
       setStarted(false);
       setSnapshot(null);
+      setLevelHistory([]);
+      setRemainingLives(3);
+      setShowResults(false);
       setInputState(initialInput);
       setError('');
     };
@@ -166,23 +205,62 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    inputStateRef.current = inputState;
+  }, [inputState]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setViewportSize(getViewportSize());
+    };
+    window.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!started) {
+      setRoundOverlayHeight(44);
+      return;
+    }
+
+    const overlay = roundOverlayRef.current;
+    if (!overlay) return;
+
+    const updateOverlayHeight = () => {
+      setRoundOverlayHeight(Math.ceil(overlay.getBoundingClientRect().height) || 44);
+    };
+
+    updateOverlayHeight();
+
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => updateOverlayHeight())
+      : null;
+
+    observer?.observe(overlay);
+    window.addEventListener('resize', updateOverlayHeight);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateOverlayHeight);
+    };
+  }, [started, viewportSize.height, viewportSize.width]);
+
+  useEffect(() => {
     if (!started) return;
 
     const onDown = (event) => {
-      const k = event.key.toLowerCase();
-      if (k === 'r') {
-        socket.emit('room:restart', (res) => {
-          if (!res?.ok) {
-            setError(res?.error || 'Unable to restart match.');
-          }
-        });
-        return;
-      }
+      const keyId = event.code || event.key.toLowerCase();
+      if (heldKeysRef.current.has(keyId)) return;
+      heldKeysRef.current.add(keyId);
+      if (event.repeat) return;
 
-      if (k === 'l') {
-        socket.emit('room:leave', (res) => {
+      if (event.key.toLowerCase() === 'p') {
+        socket.emit('room:toggle-cheat', (res) => {
           if (!res?.ok) {
-            setError(res?.error || 'Unable to return to lobby.');
+            setError(res?.error || 'Unable to toggle cheat mode.');
           }
         });
         return;
@@ -190,23 +268,23 @@ export default function App() {
 
       const mapped = keyToInput(event.key);
       if (!mapped) return;
-      setInputState((prev) => {
-        if (prev[mapped]) return prev;
-        const next = { ...prev, [mapped]: true };
-        socket.emit('input:update', next);
-        return next;
-      });
+      if (inputStateRef.current[mapped]) return;
+      const next = { ...inputStateRef.current, [mapped]: true };
+      inputStateRef.current = next;
+      setInputState(next);
+      socket.emit('input:enqueue', { action: mapped });
     };
 
     const onUp = (event) => {
+      const keyId = event.code || event.key.toLowerCase();
+      heldKeysRef.current.delete(keyId);
+
       const mapped = keyToInput(event.key);
       if (!mapped) return;
-      setInputState((prev) => {
-        if (!prev[mapped]) return prev;
-        const next = { ...prev, [mapped]: false };
-        socket.emit('input:update', next);
-        return next;
-      });
+      if (!inputStateRef.current[mapped]) return;
+      const next = { ...inputStateRef.current, [mapped]: false };
+      inputStateRef.current = next;
+      setInputState(next);
     };
 
     window.addEventListener('keydown', onDown);
@@ -214,9 +292,9 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
-      socket.emit('input:update', initialInput);
+      heldKeysRef.current.clear();
     };
-  }, [snapshot?.finish, started]);
+  }, [started]);
 
   const myPlayer = useMemo(() => {
     if (!snapshot) return null;
@@ -265,8 +343,8 @@ export default function App() {
 
     if (me && prevMe) {
       if (!prevMe.hasKey && me.hasKey) soundManager.play(SOUND.KEY);
-      if (prevMe.dead === 0 && me.dead === 1) soundManager.play(SOUND.SCREAM);
-      if (prevMe.dead !== 2 && me.dead === 2) soundManager.play(SOUND.FALL_SCREAM);
+      if (prevMe.dead === 0 && me.dead === 1 && !prevMe.fall && !me.fall) soundManager.play(SOUND.SCREAM);
+      if (!prevMe.fall && me.fall) soundManager.play(SOUND.FALL_SCREAM);
       if (!prevMe.escaped && me.escaped) soundManager.play(SOUND.EXIT);
 
       const dx = me.x - prevMe.x;
@@ -317,7 +395,6 @@ export default function App() {
       'room:create',
       {
         name: myName,
-        rows,
         maxPlayers
       },
       (res) => {
@@ -372,6 +449,22 @@ export default function App() {
     });
   };
 
+  const restartLevel = () => {
+    socket.emit('room:restart', (res) => {
+      if (!res?.ok) {
+        setError(res?.error || 'Unable to restart level.');
+      }
+    });
+  };
+
+  const goToNextLevel = () => {
+    socket.emit('room:next-level', (res) => {
+      if (!res?.ok) {
+        setError(res?.error || 'Unable to start next level.');
+      }
+    });
+  };
+
   const leaveRoom = () => {
     socket.emit('room:leave', (res) => {
       if (!res?.ok) {
@@ -383,14 +476,47 @@ export default function App() {
   const inRoom = Boolean(roomCode);
   const isHost = mySocketId && hostSocketId === mySocketId;
   const connectedPlayers = (roomStatus?.players || []).filter((p) => p.connected);
+  const roomLevel = roomStatus?.level || 1;
+  const displayLevel = snapshot?.level || roomLevel;
+  const levelSucceeded = Boolean(snapshot?.players?.some((p) => p.escaped));
+  const allLevelsCleared = levelSucceeded && displayLevel === 5;
+  const outOfLives = !levelSucceeded && remainingLives <= 0;
+  const levelActionLabel = allLevelsCleared || outOfLives ? 'View Results' : levelSucceeded ? 'Next Level' : 'Restart Level';
+  const cheatEnabled = Boolean(snapshot?.cheatEnabled);
+  const showLevelActionButton = Boolean(snapshot?.finish);
+  const roomRows = roomStatus?.rows || 0;
+  const roomCols = roomStatus?.cols || roomRows * 2;
+  const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
+  const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
+
+  const finishButtonMetrics = useMemo(() => {
+    const width = viewportSize.width;
+    const height = Math.max(0, viewportSize.height - roundOverlayHeight);
+
+    const titleSize = Math.max(34, width * 0.06);
+    const rowHeight = Math.max(26, width * 0.028);
+    const panelWidth = Math.min(width * 0.58, 520);
+    const panelPaddingY = Math.max(10, rowHeight * 0.33);
+    const panelHeight = Math.max(48, connectedRoundPlayers * rowHeight + panelPaddingY * 2);
+    const titleY = height * 0.38;
+    const panelY = titleY + Math.max(24, titleSize * 0.55);
+
+    return {
+      top: roundOverlayHeight + panelY + panelHeight + 8,
+      width: panelWidth / 2
+    };
+  }, [connectedRoundPlayers, roundOverlayHeight, viewportSize.height, viewportSize.width]);
 
   if (inRoom && started) {
     return (
       <div className="round-shell">
-        <div className="round-overlay" role="status" aria-live="polite">
+        <div className="round-overlay" role="status" aria-live="polite" ref={roundOverlayRef}>
           <div className="round-overlay-main">
             <span className="round-left">
               <span className="round-room">Room {roomCode}</span>
+              <span className="round-level">{displayLevel}/5</span>
+              <LivesBadge lives={remainingLives} />
+              {cheatEnabled && <span className="round-level round-cheat-badge">Cheat On</span>}
               <span className="round-audio-inline">
                 <button
                   className="icon-button sound-toggle"
@@ -413,17 +539,26 @@ export default function App() {
               </span>
             </span>
 
-            <span className="round-players">
-              {connectedPlayers.map((p) => (
-                <span key={p.id} className="round-player-pill">
-                  <span className="dot" style={{ backgroundColor: p.color }} />
-                  <span>{p.name}</span>
-                </span>
-              ))}
+            <span className="round-right">
+              <span className="round-players">
+                {connectedPlayers.map((p) => (
+                  <span key={p.id} className="round-player-pill">
+                    <span className="dot" style={{ backgroundColor: p.color }} />
+                    <span>{p.name}</span>
+                  </span>
+                ))}
+              </span>
+              <button
+                className="round-lobby-action"
+                onClick={leaveRoom}
+                title="Return to lobby"
+              >
+                Return to Lobby
+              </button>
             </span>
           </div>
 
-          <span className="round-controls round-controls-floating"><ControlsLegend /></span>
+          <span className="round-controls round-controls-floating"><ControlsLegend showRoundKeys={false} /></span>
         </div>
 
         <div className="round-canvas-wrap">
@@ -432,10 +567,88 @@ export default function App() {
             radarActive={Boolean(snapshot?.enableRadar)}
             mapActive={Boolean(snapshot?.enableMapView)}
             fullScreen
-            overlayHeight={44}
+            overlayHeight={roundOverlayHeight}
           />
         </div>
+        {showLevelActionButton && isHost && (
+          <button
+            className="round-restart-finish"
+            onClick={() => {
+              if (allLevelsCleared || outOfLives) {
+                setShowResults(true);
+              } else if (levelSucceeded) {
+                goToNextLevel();
+              } else {
+                restartLevel();
+              }
+            }}
+            disabled={!isHost}
+            title={levelActionLabel}
+            style={{ top: `${finishButtonMetrics.top}px`, width: `${finishButtonMetrics.width}px` }}
+          >
+            {levelActionLabel}
+          </button>
+        )}
         {error && <p className="round-error">{error}</p>}
+
+        {showResults && (
+          <div className="results-overlay">
+            <div className="results-panel">
+              <h2 className="results-title">Highest level reached: {highestLevelReached}</h2>
+              <div className="results-levels">
+                {[1, 2, 3, 4, 5].map((lvl) => {
+                  const entry = levelHistory.find((h) => h.level === lvl);
+                  const borderColor = levelTileColor(lvl, 0.75);
+                  const shadowColor = levelTileColor(lvl, 0.18);
+                  const deaths = entry
+                    ? entry.players.filter((p) => !p.escaped && Number(p.dead) > 0).length
+                    : 0;
+
+                  return (
+                    <div
+                      key={lvl}
+                      className="results-level-row"
+                      style={{ borderColor, boxShadow: `inset 0 0 0 1px ${shadowColor}` }}
+                    >
+                      <div className="results-level-header">
+                        <span className="results-level-badge">Level {lvl}</span>
+                        {entry && (
+                          <>
+                            <span className="results-attempts">
+                              {entry.attempts === 1 ? '1 attempt' : `${entry.attempts} attempts`}
+                            </span>
+                            <span className="results-deaths">
+                              {deaths === 1 ? '1 death' : `${deaths} deaths`}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {entry ? (
+                        <div className="results-players">
+                          {entry.players.map((p) => (
+                            <span key={p.id} className="results-player">
+                              <span className="dot" style={{ backgroundColor: p.color }} />
+                              <span className="results-player-name">{p.name}</span>
+                              <span className={`results-outcome ${p.escaped ? 'escaped' : 'died'}`}>
+                                {p.escaped ? 'Escaped' : 'Died'}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="results-players results-no-data">-</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <button className="results-lobby-btn" onClick={leaveRoom}>
+                Return to Lobby
+              </button>
+            </div>
+          </div>
+        )}
+        <CopyrightBadge />
       </div>
     );
   }
@@ -461,16 +674,7 @@ export default function App() {
           <div className="forms-grid">
             <article className="card">
               <h2>Create Room</h2>
-              <div className="field">
-                <label>Maze Size: {rows} x {rows * 2}</label>
-                <input
-                  type="range"
-                  min="6"
-                  max="20"
-                  value={rows}
-                  onChange={(e) => setRows(Number(e.target.value))}
-                />
-              </div>
+              <p>Level starts at 1 and increases to 5 each restart.</p>
               <div className="field">
                 <label>Player Slots</label>
                 <select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
@@ -513,7 +717,7 @@ export default function App() {
                       <div>
                         <div className="room-browser-code">{r.roomCode}</div>
                         <div className="room-browser-meta">
-                          Host {r.hostName} • {r.connectedPlayers}/{r.maxPlayers} • {r.rows}x{r.cols}
+                          Host {r.hostName} • Players {r.connectedPlayers}/{r.maxPlayers}
                         </div>
                       </div>
                       <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)}>
@@ -540,7 +744,7 @@ export default function App() {
             <div className="room-actions">
               {!started && isHost && (
                 <button onClick={startRoom} className="start">
-                  Start Match
+                  Start Maze
                 </button>
               )}
               <button onClick={leaveRoom} className="leave-room">
@@ -563,36 +767,11 @@ export default function App() {
 
             <div className="status-card">
               <h3>Controls</h3>
+              <p>Level {roomLevel} • Maze {roomRows}x{roomCols}</p>
               <ControlsLegend showRoundKeys={false} />
               <p>Radar: Step on radar tile to show pings.</p>
               <p>Goal: Find key, unlock exit, escape right side.</p>
-              <p className="game-over-help">
-                Game Over:
-                {' '}
-                <KeyCap label="R" /> restart,
-                {' '}
-                <KeyCap label="L" /> lobby.
-              </p>
-              <div className="lobby-audio-row">
-                <button
-                  className="icon-button tiny-button"
-                  onClick={() => setSoundEnabled((v) => !v)}
-                  aria-label={soundEnabled ? 'Mute sound' : 'Unmute sound'}
-                  title="Toggle sound"
-                >
-                  <SoundIcon muted={!soundEnabled} />
-                </button>
-                <input
-                  className="audio-slider volume-slider"
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(soundVolume * 100)}
-                  style={{ '--value': `${Math.round(soundVolume * 100)}%` }}
-                  onChange={(e) => setSoundVolume(Number(e.target.value) / 100)}
-                  title="Volume"
-                />
-              </div>
+
               {myPlayer && (
                 <p>
                   You are <strong>{myPlayer.name}</strong>
@@ -606,6 +785,7 @@ export default function App() {
           {error && <p className="error">{error}</p>}
         </section>
       )}
+      <CopyrightBadge />
     </div>
   );
 }

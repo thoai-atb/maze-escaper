@@ -1,4 +1,4 @@
-import { TILE_COLOR_CONFIG } from '../config';
+import { TILE_COLOR_CONFIG, getTileThemeByLevel } from '../config';
 
 function fillRect(ctx, x, y, w, h, color) {
   ctx.fillStyle = color;
@@ -71,7 +71,7 @@ function drawKey(ctx, x, y, unit, scale = 1) {
   ctx.restore();
 }
 
-function cellColor(bright, type, enabled, explored) {
+function cellColor(bright, type, enabled, explored, level) {
   const base = Math.max(TILE_COLOR_CONFIG.brightness.min, Math.min(TILE_COLOR_CONFIG.brightness.max, bright));
 
   const toHsl = (palette) => `hsl(${palette.hue} ${palette.saturation}% ${base * palette.lightnessScale}%)`;
@@ -82,10 +82,9 @@ function cellColor(bright, type, enabled, explored) {
   if (type === 2) {
     return enabled ? toHsl(TILE_COLOR_CONFIG.map.active) : toHsl(TILE_COLOR_CONFIG.map.inactive);
   }
-  if (!explored) {
-    return toHsl(TILE_COLOR_CONFIG.unvisited);
-  }
-  return toHsl(TILE_COLOR_CONFIG.normal);
+
+  const levelTheme = getTileThemeByLevel(level);
+  return explored ? toHsl(levelTheme.visited) : toHsl(levelTheme.unvisited);
 }
 
 function drawCellGlyph(ctx, cell, x, y, unit, stroke) {
@@ -427,7 +426,13 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
       cell.x,
       cell.y,
       unit,
-      cellColor(cell.bright, cell.type, cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView, cell.explored)
+      cellColor(
+        cell.bright,
+        cell.type,
+        cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView,
+        cell.explored,
+        snapshot.level
+      )
     );
     const x = cell.x * unit;
     const y = cell.y * unit;
@@ -639,6 +644,8 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
         const bodyTop = -size * 0.02;
         const bodyHeight = size * 0.62;
         ctx.fillRect(-size / 2, bodyTop, size, bodyHeight);
+        ctx.lineWidth = Math.max(1, stroke / 3);
+        ctx.strokeRect(-size / 2, bodyTop, size, bodyHeight);
 
         const shackleRadius = size * 0.32;
         const shackleCenterY = bodyTop - size * 0.2;
@@ -659,6 +666,9 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
         ctx.fill();
         ctx.fillRect(-size * 0.03, holeY, size * 0.06, size * 0.16);
       } else {
+        ctx.strokeStyle = 'rgba(6, 6, 6, 0.95)';
+        ctx.lineWidth = Math.max(1, stroke / 2);
+        ctx.lineJoin = 'round';
         ctx.fillStyle = 'rgba(70, 255, 70, 0.75)';
         ctx.beginPath();
         ctx.moveTo(unit * 0.25, 0);
@@ -666,6 +676,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
         ctx.lineTo(-unit * 0.2, unit * 0.22);
         ctx.closePath();
         ctx.fill();
+        ctx.stroke();
       }
       ctx.restore();
     }
@@ -705,7 +716,6 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
 
     const titleSize = Math.max(34, width * 0.06);
     const rowHeight = Math.max(26, width * 0.028);
-    const footerSize = Math.max(16, width * 0.018);
     const titleY = height * 0.38;
     const panelWidth = Math.min(width * 0.58, 520);
     const panelPaddingY = Math.max(10, rowHeight * 0.33);
@@ -715,7 +725,6 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     const paddingX = Math.max(20, panelWidth * 0.06);
     const listStartY = panelY + panelPaddingY + rowHeight * 0.5;
     const iconSize = Math.max(18, rowHeight * 0.75);
-    const footerY = panelY + panelHeight + Math.max(28, footerSize * 1.3);
 
     // Readable result panel while still revealing maze behind.
     ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
@@ -745,11 +754,5 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
 
       drawRoundStatusIcon(ctx, panelX + panelWidth - paddingX - iconSize * 0.5, y, iconSize, status);
     }
-
-    ctx.fillStyle = 'rgba(255,255,255,0.88)';
-    ctx.font = `${footerSize}px Space Grotesk, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('Press R to restart or L to lobby', width / 2, footerY);
   }
 }

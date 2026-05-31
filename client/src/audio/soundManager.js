@@ -1,3 +1,5 @@
+import { SOUND_PLAYBACK_CONFIG } from '../config';
+
 const SOUND_FILES = {
   STEP: '/audio/step.wav',
   SCREAM: '/audio/ghost_scream.wav',
@@ -12,6 +14,14 @@ const SOUND_FILES = {
   DOOR_CLOSE: '/audio/trapdoor_close.wav',
   KEY: '/audio/key.wav'
 };
+
+const RANDOM_RATE_BY_SOUND = Object.freeze({
+  ...SOUND_PLAYBACK_CONFIG.randomRateBySound
+});
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
 
 class SoundManager {
   constructor() {
@@ -51,6 +61,11 @@ class SoundManager {
 
     const clone = template.cloneNode();
     clone.volume = this.volume;
+    const rateRange = RANDOM_RATE_BY_SOUND[key];
+    if (rateRange) {
+      clone.playbackRate = randomBetween(rateRange[0], rateRange[1]);
+      clone.preservesPitch = false;
+    }
     clone.play().catch(() => {});
   }
 }
