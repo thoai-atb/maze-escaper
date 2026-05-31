@@ -271,6 +271,11 @@ button.leave-room {
   border-bottom: none;
 }
 
+.player-rtt {
+  font-size: 0.76rem;
+  color: rgba(151, 214, 255, 0.86);
+}
+
 .dot {
   width: 14px;
   height: 14px;
@@ -492,6 +497,12 @@ button.leave-room {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.round-player-rtt {
+  font-size: 0.68rem;
+  color: rgba(151, 214, 255, 0.86);
+  margin-left: 2px;
 }
 
 .round-canvas-wrap {

@@ -35,6 +35,7 @@ const nanoid = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6);
 const rooms = new Map();
 const socketRoom = new Map();
 const inputQueueBySocket = new Map();
+const rttBySocket = new Map();
 const INPUT_QUEUE_MAX = 24;
 const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
 const INITIAL_LIVES = 3;
@@ -71,6 +72,27 @@ function getPublicRoomList() {
 
 function emitRoomList() {
   io.emit('room:list:update', { rooms: getPublicRoomList() });
+}
+
+function getStatusWithRtt(room) {
+  const status = room.engine.getRoomStatus();
+  const rttByPlayerId = new Map();
+
+  for (const player of room.engine.players) {
+    if (!player.socketId) continue;
+    const rttMs = rttBySocket.get(player.socketId);
+    if (typeof rttMs === 'number') {
+      rttByPlayerId.set(player.id, rttMs);
+    }
+  }
+
+  return {
+    ...status,
+    players: status.players.map((player) => ({
+      ...player,
+      rttMs: rttByPlayerId.get(player.id) ?? null
+    }))
+  };
 }
 
 function getResultPlayers(room, engine = room.engine) {
@@ -167,6 +189,7 @@ function leaveCurrentRoom(socketId) {
   const room = rooms.get(roomCode);
   socketRoom.delete(socketId);
   inputQueueBySocket.delete(socketId);
+  rttBySocket.delete(socketId);
   if (!room) return;
 
   room.engine.detachPlayer(socketId);
@@ -179,7 +202,7 @@ function leaveCurrentRoom(socketId) {
   io.to(roomCode).emit('room:update', {
     roomCode,
     status: {
-      ...room.engine.getRoomStatus(),
+      ...getStatusWithRtt(room),
       remainingLives: room.remainingLives,
       resultsOpened: room.resultsOpened
     },
@@ -201,7 +224,7 @@ function emitRoomUpdate(roomCode) {
   io.to(roomCode).emit('room:update', {
     roomCode,
     status: {
-      ...room.engine.getRoomStatus(),
+      ...getStatusWithRtt(room),
       remainingLives: room.remainingLives,
       resultsOpened: room.resultsOpened
     },
@@ -332,7 +355,7 @@ io.on('connection', (socket) => {
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
-        ...room.engine.getRoomStatus(),
+        ...getStatusWithRtt(room),
         remainingLives: room.remainingLives,
         resultsOpened: room.resultsOpened
       }
@@ -376,7 +399,7 @@ io.on('connection', (socket) => {
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
-        ...nextEngine.getRoomStatus(),
+        ...getStatusWithRtt(room),
         remainingLives: room.remainingLives,
         resultsOpened: room.resultsOpened
       }
@@ -422,7 +445,7 @@ io.on('connection', (socket) => {
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
-        ...nextEngine.getRoomStatus(),
+        ...getStatusWithRtt(room),
         remainingLives: room.remainingLives,
         resultsOpened: room.resultsOpened
       }
@@ -522,6 +545,22 @@ io.on('connection', (socket) => {
     inputQueueBySocket.set(socket.id, queue);
   });
 
+  socket.on('net:ping', (_clientTs, cb) => {
+    cb?.({ ok: true, serverTs: Date.now() });
+  });
+
+  socket.on('net:rtt', (payload) => {
+    const parsed = Number(payload);
+    if (!Number.isFinite(parsed)) return;
+    const rttMs = Math.max(0, Math.min(5000, Math.round(parsed)));
+    rttBySocket.set(socket.id, rttMs);
+
+    const roomCode = socketRoom.get(socket.id);
+    if (roomCode) {
+      emitRoomUpdate(roomCode);
+    }
+  });
+
   socket.on('disconnect', () => {
     leaveCurrentRoom(socket.id);
   });
@@ -538,6 +577,11 @@ setInterval(() => {
 
     room.engine.update(dt, inputQueueBySocket);
     const snapshot = room.engine.getSnapshot();
+
+    snapshot.players = snapshot.players.map((player) => ({
+      ...player,
+      rttMs: player.socketId ? (rttBySocket.get(player.socketId) ?? null) : null
+    }));
 
     if (snapshot.finish && !room.roundFinishedAt) {
       room.roundFinishedAt = Date.now();

@@ -55,6 +55,11 @@ function formatRoundDuration(ms) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatRtt(ms) {
+  if (!Number.isFinite(ms)) return null;
+  return `${Math.max(0, Math.round(ms))}ms`;
+}
+
 function SoundIcon({ muted }) {
   if (muted) {
     return (
@@ -419,6 +424,27 @@ export default function App() {
     prevSnapshotRef.current = snapshot;
   }, [hasMapGadget, hasRadarGadget, mySocketId, snapshot, started]);
 
+  useEffect(() => {
+    if (!roomCode) return undefined;
+
+    let active = true;
+    const sendPing = () => {
+      const sentAt = Date.now();
+      socket.emit('net:ping', sentAt, (res) => {
+        if (!active || !res?.ok) return;
+        socket.emit('net:rtt', Date.now() - sentAt);
+      });
+    };
+
+    sendPing();
+    const intervalId = window.setInterval(sendPing, 2000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [roomCode]);
+
   const createRoom = () => {
     const enteredName = myName.trim();
     if (!enteredName) {
@@ -604,6 +630,7 @@ export default function App() {
                   <span key={p.id} className="round-player-pill">
                     <span className="dot" style={{ backgroundColor: p.color }} />
                     <span>{p.name}</span>
+                    {formatRtt(p.rttMs) && <span className="round-player-rtt">{formatRtt(p.rttMs)}</span>}
                   </span>
                 ))}
               </span>
@@ -829,6 +856,7 @@ export default function App() {
                 <div key={p.id} className="player-row">
                   <span className="dot" style={{ backgroundColor: p.color }} />
                   <span>{p.name}</span>
+                  <span className="player-rtt">{formatRtt(p.rttMs) || '--'}</span>
                   {started && <span>{p.escaped ? 'Escaped' : p.dead ? 'Wasted' : 'Alive'}</span>}
                 </div>
               ))}
