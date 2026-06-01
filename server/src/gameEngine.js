@@ -365,12 +365,10 @@ export class GameEngine {
         if (this._hasActivePlayerAt(player.x, player.y)) {
           if (!player.reviveStartedAt) player.reviveStartedAt = this.tickMs;
           if (this.tickMs - player.reviveStartedAt >= SERVER_CONFIG.player.reviveMs) {
-            const reviveFromX = player.x;
-            const reviveFromY = player.y;
             player.dead = 0;
             player.reviveStartedAt = 0;
             player.diameter = 0.5;
-            this._moveRevivedPlayerOneStep(player, reviveFromX, reviveFromY);
+            this._arrangePlayersAt(player.x, player.y);
           }
         } else {
           player.reviveStartedAt = 0;
@@ -932,27 +930,6 @@ export class GameEngine {
     }
 
     this._checkKeyPickup(entity);
-  }
-
-  _moveRevivedPlayerOneStep(player, fromX, fromY) {
-    const dirs = ['up', 'down', 'left', 'right'];
-    for (let i = dirs.length - 1; i > 0; i -= 1) {
-      const j = randInt(0, i + 1);
-      const tmp = dirs[i];
-      dirs[i] = dirs[j];
-      dirs[j] = tmp;
-    }
-
-    for (const dir of dirs) {
-      if (!this._canMove(player, dir, false)) continue;
-      this._applyMove(player, dir);
-      this._markCellExplored(player.x, player.y);
-      this._arrangePlayersAt(fromX, fromY);
-      this._arrangePlayersAt(player.x, player.y);
-      return;
-    }
-
-    this._arrangePlayersAt(fromX, fromY);
   }
 
   _allPlayersInactive() {

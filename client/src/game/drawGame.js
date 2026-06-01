@@ -709,6 +709,27 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     drawKey(ctx, snapshot.key.x * unit, snapshot.key.y * unit, unit, 1);
   }
 
+  for (const player of snapshot.players) {
+    if (!player.socketId) continue;
+
+    const playerCell = snapshot.cells[Math.round(player.cy) * cols + Math.round(player.cx)];
+    if (player.dead === 2) continue;
+    if (player.dead === 1 && !playerCell?.inSight) continue;
+
+    const alpha = player.dead === 1 ? '88' : 'f2';
+    ctx.fillStyle = `${player.color}${alpha}`;
+    ctx.strokeStyle = player.dead === 1 ? 'rgba(0, 0, 0, 0.32)' : 'rgba(0, 0, 0, 0.88)';
+    ctx.lineWidth = stroke / 2;
+    ctx.beginPath();
+    ctx.arc((player.cx + 0.5) * unit, (player.cy + 0.5) * unit, unit * 0.24 * player.diameter * 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    if (player.hasKey) {
+      drawKey(ctx, player.cx * unit, player.cy * unit, unit, 0.45);
+    }
+  }
+
   for (const ghost of snapshot.ghosts) {
     const cell = snapshot.cells[Math.round(ghost.cy) * cols + Math.round(ghost.cx)];
     if (!cell?.inSight) continue;
@@ -737,29 +758,8 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
       drawKey(ctx, ghost.cx * unit, ghost.cy * unit, unit, 0.45);
     }
   }
-
+  
   drawParticles(ctx, snapshot, unit);
-
-  for (const player of snapshot.players) {
-    if (!player.socketId) continue;
-
-    const playerCell = snapshot.cells[Math.round(player.cy) * cols + Math.round(player.cx)];
-    if (player.dead === 2) continue;
-    if (player.dead === 1 && !playerCell?.inSight) continue;
-
-    const alpha = player.dead === 1 ? '88' : 'f2';
-    ctx.fillStyle = `${player.color}${alpha}`;
-    ctx.strokeStyle = player.dead === 1 ? 'rgba(0, 0, 0, 0.32)' : 'rgba(0, 0, 0, 0.88)';
-    ctx.lineWidth = stroke / 2;
-    ctx.beginPath();
-    ctx.arc((player.cx + 0.5) * unit, (player.cy + 0.5) * unit, unit * 0.24 * player.diameter * 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    if (player.hasKey) {
-      drawKey(ctx, player.cx * unit, player.cy * unit, unit, 0.45);
-    }
-  }
 
   if (radarActive) {
     drawRadarOverlay(ctx, snapshot, unit, cols, { hideGhostBlips: hideGhostRadarBlips });
