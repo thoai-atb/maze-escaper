@@ -410,7 +410,7 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 export function drawGame(ctx, snapshot, width, height, options = {}) {
   if (!snapshot) return;
 
-  const { radarActive = false, mapActive = false, animationTimeMs = 0 } = options;
+  const { radarActive = false, mapActive = false, enterHintText = '', animationTimeMs = 0 } = options;
 
   const { rows, cols } = snapshot;
   const unit = height / rows;
@@ -753,6 +753,15 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
       ctx.fillText(p.name, panelX + paddingX, y);
 
       drawRoundStatusIcon(ctx, panelX + panelWidth - paddingX - iconSize * 0.5, y, iconSize, status);
+    }
+
+    if (enterHintText) {
+      const hintY = panelY + panelHeight + Math.max(22, rowHeight * 0.9);
+      ctx.font = `${Math.max(13, width * 0.015)}px Space Grotesk, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255, 238, 208, 0.98)';
+      ctx.fillText(enterHintText, width / 2, hintY);
     }
   }
 }

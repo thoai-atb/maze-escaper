@@ -40,6 +40,51 @@ const INPUT_QUEUE_MAX = 24;
 const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
 const INITIAL_LIVES = 3;
 
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function getRandomPlaybackRate(soundKey) {
+  const rateRange = SERVER_CONFIG.audio?.randomRateBySound?.[soundKey];
+  if (!Array.isArray(rateRange) || rateRange.length < 2) return undefined;
+  return randomBetween(Number(rateRange[0]) || 1, Number(rateRange[1]) || 1);
+}
+
+function emitRoomAudio(ioServer, roomCode, soundKey) {
+  const playbackRate = getRandomPlaybackRate(soundKey);
+  ioServer.to(roomCode).emit('game:audio', {
+    key: soundKey,
+    playbackRate
+  });
+}
+
+function emitPlayerDeathAudioEvents(ioServer, roomCode, room, snapshot) {
+  const prevStateById = room.playerAudioStateById;
+  const nextStateById = new Map();
+
+  for (const player of snapshot.players || []) {
+    const current = {
+      dead: player.dead,
+      fall: Boolean(player.fall)
+    };
+    nextStateById.set(player.id, current);
+
+    if (!player.socketId) continue;
+    const previous = prevStateById.get(player.id);
+    if (!previous) continue;
+
+    if (previous.dead === 0 && current.dead === 1 && !previous.fall && !current.fall) {
+      emitRoomAudio(ioServer, roomCode, 'SCREAM');
+    }
+
+    if (!previous.fall && current.fall) {
+      emitRoomAudio(ioServer, roomCode, 'FALL_SCREAM');
+    }
+  }
+
+  room.playerAudioStateById = nextStateById;
+}
+
 function getMapPayload(room) {
   const engine = room.engine;
   return {
@@ -226,7 +271,8 @@ function createRoom({ hostSocketId, hostName, maxPlayers }) {
     resultsOpened: false,
     resultPlayerIds: [],
     remainingLives: INITIAL_LIVES,
-    failurePenaltyApplied: false
+    failurePenaltyApplied: false,
+    playerAudioStateById: new Map()
   };
 
   const attached = engine.attachPlayer(hostSocketId, hostName || 'Host');
@@ -427,6 +473,7 @@ io.on('connection', (socket) => {
     room.resultsOpened = false;
     room.started = true;
     room.mapVersion += 1;
+    room.playerAudioStateById = new Map();
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
@@ -475,6 +522,7 @@ io.on('connection', (socket) => {
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
     room.mapVersion += 1;
+    room.playerAudioStateById = new Map();
 
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -526,6 +574,7 @@ io.on('connection', (socket) => {
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
     room.mapVersion += 1;
+    room.playerAudioStateById = new Map();
 
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -667,6 +716,8 @@ setInterval(() => {
     room.engine.update(dt, inputQueueBySocket);
     const fullSnapshot = room.engine.getSnapshot();
     const snapshot = buildDynamicSnapshot(room, fullSnapshot);
+
+    emitPlayerDeathAudioEvents(io, roomCode, room, snapshot);
 
     snapshot.players = snapshot.players.map((player) => ({
       ...player,

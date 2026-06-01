@@ -33,6 +33,12 @@ export const SERVER_CONFIG = {
     activeMs: 3000, // Increase -> trap stays dangerous longer. Decrease -> dangerous window is shorter.
     openCloseRatePerMs: 0.0012 // Increase -> trap opens/closes faster. Decrease -> opens/closes slower.
   },
+  audio: {
+    randomRateBySound: {
+      SCREAM: [0.6, 1.2], // Range for ghost-kill scream playback rate.
+      FALL_SCREAM: [0.6, 1.2] // Range for trap-fall scream playback rate.
+    }
+  },
   vision: {
     maxSightDistance: 8 // Increase -> farther visibility/brightness reach. Decrease -> shorter visibility/darker play.
   },

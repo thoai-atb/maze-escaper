@@ -242,6 +242,7 @@ export default function GameCanvas({
   mapPayload,
   radarActive,
   mapActive,
+  enterHintText = '',
   fullScreen = false,
   overlayHeight = 0
 }) {
@@ -334,6 +335,7 @@ export default function GameCanvas({
         drawGame(ctx, renderSnapshot, size.width, size.height, {
           radarActive,
           mapActive,
+          enterHintText,
           animationTimeMs: nowMs
         });
       }
@@ -346,7 +348,7 @@ export default function GameCanvas({
     return () => {
       window.cancelAnimationFrame(frameRef.current);
     };
-  }, [mapActive, radarActive, size.height, size.width]);
+  }, [enterHintText, mapActive, radarActive, size.height, size.width]);
 
   return <canvas ref={canvasRef} className="game-canvas" aria-label="Maze game board" />;
 }

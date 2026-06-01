@@ -312,6 +312,7 @@ export default function App() {
   const mapPayloadRef = useRef(null);
   const predictedTrapsRef = useRef(new Set());
   const pendingMovesRef = useRef([]);
+  const levelActionRef = useRef({ enabled: false, mode: 'restart' });
 
   useEffect(() => {
     mySocketIdRef.current = mySocketId;
@@ -363,6 +364,12 @@ export default function App() {
       if (typeof data.remainingLives === 'number') setRemainingLives(data.remainingLives);
       if (typeof data.resultsOpened === 'boolean') setShowResults(data.resultsOpened);
     };
+    const onGameAudio = (data) => {
+      const soundKey = String(data?.key || '');
+      if (soundKey === SOUND.SCREAM || soundKey === SOUND.FALL_SCREAM) {
+        soundManager.play(soundKey, { playbackRate: data?.playbackRate });
+      }
+    };
     const onRoomListUpdate = (data) => {
       setPublicRooms(Array.isArray(data?.rooms) ? data.rooms : []);
     };
@@ -387,6 +394,7 @@ export default function App() {
     socket.on('game:start', onGameStart);
     socket.on('game:map', onGameMap);
     socket.on('game:state', onGameState);
+    socket.on('game:audio', onGameAudio);
     socket.on('room:list:update', onRoomListUpdate);
     socket.on('room:left', onRoomLeft);
 
@@ -402,6 +410,7 @@ export default function App() {
       socket.off('game:start', onGameStart);
       socket.off('game:map', onGameMap);
       socket.off('game:state', onGameState);
+      socket.off('game:audio', onGameAudio);
       socket.off('room:list:update', onRoomListUpdate);
       socket.off('room:left', onRoomLeft);
     };
@@ -473,6 +482,36 @@ export default function App() {
         socket.emit('room:skip-level', (res) => {
           if (!res?.ok) {
             setError(res?.error || 'Unable to skip level.');
+          }
+        });
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        const action = levelActionRef.current;
+        if (!action.enabled) return;
+
+        if (action.mode === 'results') {
+          socket.emit('room:view-results', (res) => {
+            if (!res?.ok) {
+              setError(res?.error || 'Unable to open results.');
+            }
+          });
+          return;
+        }
+
+        if (action.mode === 'next') {
+          socket.emit('room:next-level', (res) => {
+            if (!res?.ok) {
+              setError(res?.error || 'Unable to start next level.');
+            }
+          });
+          return;
+        }
+
+        socket.emit('room:restart', (res) => {
+          if (!res?.ok) {
+            setError(res?.error || 'Unable to restart level.');
           }
         });
         return;
@@ -599,8 +638,6 @@ export default function App() {
         const prevPlayer = prev.players?.find((p) => p.id === player.id);
         if (!prevPlayer) continue;
 
-        if (prevPlayer.dead === 0 && player.dead === 1 && !prevPlayer.fall && !player.fall) soundManager.play(SOUND.SCREAM);
-        if (!prevPlayer.fall && player.fall) soundManager.play(SOUND.FALL_SCREAM);
         if (!prevPlayer.hasKey && player.hasKey) soundManager.play(SOUND.KEY);
         if (!prevPlayer.escaped && player.escaped) soundManager.play(SOUND.EXIT);
         if (!revivedAny && prevPlayer.dead === 1 && player.dead === 0) {
@@ -783,6 +820,8 @@ export default function App() {
   const cheatEnabled = Boolean(snapshot?.cheatEnabled);
   const showLevelActionButton = Boolean(snapshot?.finish);
   const showResultActionForAll = allLevelsCleared || outOfLives;
+  const canTriggerLevelAction = showLevelActionButton && (isHost || showResultActionForAll);
+  const enterHintText = canTriggerLevelAction ? `Press Enter to ${levelActionLabel}` : '';
   const roomRows = roomStatus?.rows || 0;
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
@@ -790,23 +829,12 @@ export default function App() {
   const levelFiveResult = levelHistory.find((entry) => entry.level === 5);
   const completedAllLevels = Boolean(levelFiveResult?.players?.some((p) => p.escaped));
 
-  const finishButtonMetrics = useMemo(() => {
-    const width = viewportSize.width;
-    const height = Math.max(0, viewportSize.height - roundOverlayHeight);
-
-    const titleSize = Math.max(34, width * 0.06);
-    const rowHeight = Math.max(26, width * 0.028);
-    const panelWidth = Math.min(width * 0.58, 520);
-    const panelPaddingY = Math.max(10, rowHeight * 0.33);
-    const panelHeight = Math.max(48, connectedRoundPlayers * rowHeight + panelPaddingY * 2);
-    const titleY = height * 0.38;
-    const panelY = titleY + Math.max(24, titleSize * 0.55);
-
-    return {
-      top: roundOverlayHeight + panelY + panelHeight + 8,
-      width: panelWidth / 2
-    };
-  }, [connectedRoundPlayers, roundOverlayHeight, viewportSize.height, viewportSize.width]);
+  useEffect(() => {
+    let mode = 'restart';
+    if (allLevelsCleared || outOfLives) mode = 'results';
+    else if (levelSucceeded) mode = 'next';
+    levelActionRef.current = { enabled: canTriggerLevelAction, mode };
+  }, [allLevelsCleared, canTriggerLevelAction, levelSucceeded, outOfLives]);
 
   if (inRoom && started) {
     return (
@@ -817,6 +845,24 @@ export default function App() {
               <span className="round-room">Room {roomCode}</span>
               <span className="round-level">{displayLevel}/5</span>
               <LivesBadge lives={remainingLives} />
+              {showLevelActionButton && (isHost || showResultActionForAll) && (
+                <button
+                  className="round-level-action"
+                  onClick={() => {
+                    if (allLevelsCleared || outOfLives) {
+                      viewResults();
+                    } else if (levelSucceeded) {
+                      goToNextLevel();
+                    } else {
+                      restartLevel();
+                    }
+                  }}
+                  disabled={!isHost && !showResultActionForAll}
+                  title={levelActionLabel}
+                >
+                  {levelActionLabel}
+                </button>
+              )}
               {cheatEnabled && <span className="round-level round-cheat-badge">Cheat On</span>}
               <span className="round-audio-inline">
                 <button
@@ -841,14 +887,16 @@ export default function App() {
             </span>
 
             <span className="round-right">
-              <span className="round-players">
-                {connectedPlayers.map((p) => (
-                  <span key={p.id} className="round-player-pill">
-                    <span className="dot" style={{ backgroundColor: p.color }} />
-                    <span>{p.name}</span>
-                    {formatRtt(p.rttMs) && <span className="round-player-rtt">{formatRtt(p.rttMs)}</span>}
-                  </span>
-                ))}
+              <span className="round-right-info">
+                <span className="round-players">
+                  {connectedPlayers.map((p) => (
+                    <span key={p.id} className="round-player-pill">
+                      <span className="dot" style={{ backgroundColor: p.color }} />
+                      <span>{p.name}</span>
+                      {formatRtt(p.rttMs) && <span className="round-player-rtt">{formatRtt(p.rttMs)}</span>}
+                    </span>
+                  ))}
+                </span>
               </span>
               <button
                 className="round-lobby-action"
@@ -869,29 +917,11 @@ export default function App() {
             mapPayload={mapPayload}
             radarActive={Boolean(snapshot?.enableRadar)}
             mapActive={Boolean(snapshot?.enableMapView)}
+            enterHintText={enterHintText}
             fullScreen
             overlayHeight={roundOverlayHeight}
           />
         </div>
-        {showLevelActionButton && (isHost || showResultActionForAll) && (
-          <button
-            className="round-restart-finish"
-            onClick={() => {
-              if (allLevelsCleared || outOfLives) {
-                viewResults();
-              } else if (levelSucceeded) {
-                goToNextLevel();
-              } else {
-                restartLevel();
-              }
-            }}
-            disabled={!isHost && !showResultActionForAll}
-            title={levelActionLabel}
-            style={{ top: `${finishButtonMetrics.top}px`, width: `${finishButtonMetrics.width}px` }}
-          >
-            {levelActionLabel}
-          </button>
-        )}
         {error && <p className="round-error">{error}</p>}
 
         {showResults && (
