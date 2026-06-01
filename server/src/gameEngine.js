@@ -212,6 +212,7 @@ export class GameEngine {
         reviveStartedAt: 0,
         lastMoveAt: 0,
         trapCooldownAt: 0,
+        ghostKillsRound: 0,
         teleported: false
       });
     }
@@ -234,6 +235,7 @@ export class GameEngine {
           crazy: Math.random() < SERVER_CONFIG.ghost.crazyChance,
           lastMoveAt: 0,
           diameter: 0.5,
+          killedByPlayerId: null,
           teleported: false,
           route: [],
           targetX: null,
@@ -315,6 +317,7 @@ export class GameEngine {
 
     this._updatePlayers(dtMs, inputQueueBySocket);
     this._updateGhosts(dtMs);
+    this._checkActivePlayerTraps();
     this._updateTraps(dtMs);
     this._arrangeAllPlayers();
 
@@ -396,7 +399,7 @@ export class GameEngine {
 
       if (action === 'trap') {
         if (this.tickMs >= player.trapCooldownAt) {
-          this._placeTrap(player.x, player.y);
+          this._placeTrap(player.x, player.y, player.id);
           player.trapCooldownAt = this.tickMs + SERVER_CONFIG.player.trapCooldownMs;
           inputQueue.shift();
         }
@@ -408,6 +411,13 @@ export class GameEngine {
 
       this._checkUnlockExit(player);
       this._checkPortalFor(player);
+    }
+  }
+
+  _checkActivePlayerTraps() {
+    for (const player of this.players) {
+      if (player.fall || player.escaped || player.dead === 2) continue;
+      if (player.dead === 1) continue;
       this._checkTrapFor(player);
     }
   }
@@ -419,7 +429,13 @@ export class GameEngine {
       if (ghost.fall) {
         ghost.diameter = Math.max(0, ghost.diameter - dtMs * 0.00065);
         if (ghost.diameter <= 0.05) {
+          const killerId = Number(ghost.killedByPlayerId);
+          if (Number.isFinite(killerId)) {
+            const killer = this.players.find((player) => player.id === killerId);
+            if (killer) killer.ghostKillsRound = (Number(killer.ghostKillsRound) || 0) + 1;
+          }
           this._updateKeyOwnerOnGhostDeath(ghost);
+          ghost.killedByPlayerId = null;
           ghost.dead = true;
         }
         continue;
@@ -667,7 +683,7 @@ export class GameEngine {
     }
   }
 
-  _placeTrap(x, y) {
+  _placeTrap(x, y, ownerPlayerId = null) {
     if (this.traps.some((t) => t.x === x && t.y === y && !t.dead)) return;
     this.traps.push({
       x,
@@ -676,9 +692,16 @@ export class GameEngine {
       inner: 0,
       set: false,
       dead: false,
+      ownerPlayerId: Number.isFinite(ownerPlayerId) ? ownerPlayerId : null,
       timerMs: SERVER_CONFIG.trap.activeMs,
       rate: SERVER_CONFIG.trap.openCloseRatePerMs
     });
+  }
+
+  _consumeTrap(trap) {
+    if (!trap) return;
+    trap.set = true;
+    trap.timerMs = 0;
   }
 
   _checkTrapFor(entity) {
@@ -694,7 +717,7 @@ export class GameEngine {
     for (const trap of this.traps) {
       if (!trap.set || trap.timerMs <= 0) continue;
       if (trap.x === ex && trap.y === ey) {
-        trap.timerMs = 0;
+        this._consumeTrap(trap);
         if (downedPlayer) {
           this._relocateDownedPlayer(entity, trap.x, trap.y);
           entity.reviveStartedAt = 0;
@@ -705,6 +728,9 @@ export class GameEngine {
         entity.y = ey;
         entity.fx = ex;
         entity.fy = ey;
+        if (entity.ghostId) {
+          entity.killedByPlayerId = Number.isFinite(trap.ownerPlayerId) ? trap.ownerPlayerId : null;
+        }
         entity.fall = true;
         return;
       }
@@ -1095,6 +1121,7 @@ export class GameEngine {
         fall: p.fall,
         dead: p.dead,
         escaped: p.escaped,
+        ghostKills: Number(p.ghostKillsRound) || 0,
         diameter: p.diameter,
         teleported: Boolean(p.teleported),
         hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id

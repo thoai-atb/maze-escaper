@@ -804,11 +804,20 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
       const p = connectedPlayers[i];
       const y = listStartY + i * rowHeight;
       const status = p.escaped ? 'survived' : (p.dead ? 'dead' : 'alive');
+      const killsText = `${Number(p.ghostKills) || 0} 👻`;
+      const iconX = panelX + panelWidth - paddingX - iconSize * 0.5;
 
       ctx.fillStyle = p.color;
       ctx.fillText(p.name, panelX + paddingX, y);
 
-      drawRoundStatusIcon(ctx, panelX + panelWidth - paddingX - iconSize * 0.5, y, iconSize, status);
+      ctx.font = `${Math.max(12, width * 0.013)}px Space Grotesk, sans-serif`;
+      ctx.fillStyle = 'rgba(214, 214, 214, 0.92)';
+      ctx.textAlign = 'right';
+      ctx.fillText(killsText, iconX - Math.max(16, iconSize * 0.9), y);
+      ctx.textAlign = 'left';
+      ctx.font = `${Math.max(15, width * 0.017)}px Space Grotesk, sans-serif`;
+
+      drawRoundStatusIcon(ctx, iconX, y, iconSize, status);
     }
 
     if (enterHintText) {

@@ -414,6 +414,18 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
       if (typeof event.minBright === 'number') {
         next.minBright = event.minBright;
       }
+      if (Array.isArray(event.playerGhostKills)) {
+        const ghostKillsById = new Map(
+          event.playerGhostKills
+            .map((entry) => [Number(entry?.id), Number(entry?.ghostKills) || 0])
+            .filter(([id]) => Number.isFinite(id))
+        );
+        next.players = next.players.map((player) => (
+          ghostKillsById.has(player.id)
+            ? { ...player, ghostKills: ghostKillsById.get(player.id) }
+            : player
+        ));
+      }
       continue;
     }
 
@@ -1350,8 +1362,11 @@ export default function App() {
                             <span key={p.id} className="results-player">
                               <span className="dot" style={{ backgroundColor: p.color }} />
                               <span className="results-player-name">{p.name}</span>
-                              <span className={`results-outcome ${p.escaped ? 'escaped' : 'died'}`}>
-                                {p.escaped ? 'Escaped' : 'Died'}
+                              <span className="results-player-meta">
+                                <span className="results-player-kills">{`${Number(p.ghostKills) || 0} 👻`}</span>
+                                <span className={`results-outcome ${p.escaped ? 'escaped' : 'died'}`}>
+                                  {p.escaped ? 'Escaped' : 'Died'}
+                                </span>
                               </span>
                             </span>
                           ))}

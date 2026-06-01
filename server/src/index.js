@@ -58,35 +58,69 @@ function emitRoomAudio(ioServer, roomCode, soundKey) {
   });
 }
 
-function emitPlayerDeathAudioEvents(ioServer, roomCode, room, snapshot) {
-  const prevStateById = room.playerAudioStateById;
-  const nextStateById = new Map();
+function logDebugEvents(roomCode, events, uiPatch) {
+  const debugConfig = SERVER_CONFIG.debug?.events;
+  if (!debugConfig?.enabled) return;
 
-  for (const player of snapshot.players || []) {
-    const current = {
-      dead: player.dead,
-      fall: Boolean(player.fall)
-    };
-    nextStateById.set(player.id, current);
+  const onlyTypes = Array.isArray(debugConfig.onlyTypes)
+    ? new Set(debugConfig.onlyTypes.map((type) => String(type)))
+    : null;
+  const filteredEvents = (events || []).filter((event) => (
+    event
+    && typeof event.type === 'string'
+    && (!onlyTypes || onlyTypes.size === 0 || onlyTypes.has(event.type))
+  ));
 
-    if (!player.socketId) continue;
-    const previous = prevStateById.get(player.id);
-    if (!previous) continue;
+  if (filteredEvents.length === 0 && !(debugConfig.logUiPatch && uiPatch)) return;
 
-    if (previous.dead === 0 && current.dead === 1 && !previous.fall && !current.fall) {
-      emitRoomAudio(ioServer, roomCode, 'SCREAM');
-    }
-
-    if (previous.dead === 0 && current.dead !== 0) {
-      inputQueueBySocket.delete(player.socketId);
-    }
-
-    if (!previous.fall && current.fall) {
-      emitRoomAudio(ioServer, roomCode, 'FALL_SCREAM');
+  const prefix = debugConfig.includeRoomCode ? `[events][${roomCode}]` : '[events]';
+  if (filteredEvents.length > 0) {
+    console.log(`${prefix} ${filteredEvents.length} event(s)`);
+    for (const event of filteredEvents) {
+      console.log(`${prefix} ${JSON.stringify(event)}`);
     }
   }
 
-  room.playerAudioStateById = nextStateById;
+  if (debugConfig.logUiPatch && uiPatch) {
+    console.log(`${prefix} ui ${JSON.stringify(uiPatch)}`);
+  }
+}
+
+function handlePlayerAudioAndDeathQueueFromEvents(ioServer, roomCode, events, fullSnapshot) {
+  if (!Array.isArray(events) || events.length === 0) return;
+
+  const playersById = new Map((fullSnapshot?.players || []).map((player) => [player.id, player]));
+  const handledPlayerDeaths = new Set();
+
+  for (const event of events) {
+    if (!event || typeof event.type !== 'string') continue;
+
+    if (event.type === 'player_fall') {
+      const player = playersById.get(event.id);
+      if (player?.socketId) {
+        emitRoomAudio(ioServer, roomCode, 'FALL_SCREAM');
+      }
+      continue;
+    }
+
+    if (event.type === 'player_ghost_die') {
+      const player = playersById.get(event.id);
+      if (player?.socketId) {
+        emitRoomAudio(ioServer, roomCode, 'SCREAM');
+      }
+      continue;
+    }
+
+    if (event.type === 'player_die') {
+      if (handledPlayerDeaths.has(event.id)) continue;
+      handledPlayerDeaths.add(event.id);
+
+      const player = playersById.get(event.id);
+      if (!player?.socketId) continue;
+
+      inputQueueBySocket.delete(player.socketId);
+    }
+  }
 }
 
 function getMapPayload(room) {
@@ -267,6 +301,10 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         diameter: player.diameter,
         hasKey: player.hasKey
       });
+
+      if (Number(prevPlayer.dead) === 1 && Number(player.dead) === 1) {
+        events.push({ type: 'body_fall', id: player.id, x: player.x, y: player.y });
+      }
     }
 
     if (!prevPlayer.fall && player.fall) {
@@ -275,6 +313,9 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
 
     if (prevPlayer.dead === 0 && player.dead === 1) {
       events.push({ type: 'player_die', id: player.id, x: player.x, y: player.y, dead: player.dead });
+      if (!Boolean(player.fall) && !Boolean(prevPlayer.fall)) {
+        events.push({ type: 'player_ghost_die', id: player.id, x: player.x, y: player.y });
+      }
     }
 
     const playerStateChanged = (
@@ -476,7 +517,11 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       type: 'round_finish',
       canRestart: Boolean(nextSnapshot.canRestart),
       minBright: nextSnapshot.minBright,
-      exploredCellIndices
+      exploredCellIndices,
+      playerGhostKills: (fullSnapshot?.players || []).map((player) => ({
+        id: player.id,
+        ghostKills: Number(player.ghostKills) || 0
+      }))
     });
   }
 
@@ -589,7 +634,8 @@ function getResultPlayers(room, engine = room.engine) {
       name: player.name,
       color: player.color,
       escaped: Boolean(player.escaped),
-      dead: player.dead
+      dead: player.dead,
+      ghostKills: Number(player.ghostKillsRound) || 0
     }));
 }
 
@@ -636,7 +682,6 @@ function createRoom({ hostSocketId, hostName, maxPlayers }) {
     resultPlayerIds: [],
     remainingLives: INITIAL_LIVES,
     failurePenaltyApplied: false,
-    playerAudioStateById: new Map(),
     lastSnapshotForEvents: null,
     lastUiState: null
   };
@@ -837,7 +882,6 @@ io.on('connection', (socket) => {
     room.resultsOpened = false;
     room.started = true;
     room.mapVersion += 1;
-    room.playerAudioStateById = new Map();
     room.lastSnapshotForEvents = null;
     room.lastUiState = null;
     io.to(roomCode).emit('game:start', {
@@ -887,7 +931,6 @@ io.on('connection', (socket) => {
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
     room.mapVersion += 1;
-    room.playerAudioStateById = new Map();
     room.lastSnapshotForEvents = null;
     room.lastUiState = null;
 
@@ -940,7 +983,6 @@ io.on('connection', (socket) => {
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
     room.mapVersion += 1;
-    room.playerAudioStateById = new Map();
     room.lastSnapshotForEvents = null;
     room.lastUiState = null;
 
@@ -1084,8 +1126,6 @@ setInterval(() => {
     const fullSnapshot = room.engine.getSnapshot();
     const snapshot = withPlayerRtt(buildDynamicSnapshot(room, fullSnapshot));
 
-    emitPlayerDeathAudioEvents(io, roomCode, room, snapshot);
-
     if (snapshot.finish && !room.roundFinishedAt) {
       room.roundFinishedAt = Date.now();
     }
@@ -1110,10 +1150,12 @@ setInterval(() => {
     }
 
     const events = buildDeltaEvents(previousSnapshot, snapshot, fullSnapshot);
+    handlePlayerAudioAndDeathQueueFromEvents(io, roomCode, events, fullSnapshot);
     const nextUiState = buildUiState(room);
     const uiPatch = buildUiPatch(room.lastUiState, nextUiState);
 
     if (events.length > 0 || uiPatch) {
+      logDebugEvents(roomCode, events, uiPatch);
       io.to(roomCode).emit('game:events', {
         events,
         ui: uiPatch

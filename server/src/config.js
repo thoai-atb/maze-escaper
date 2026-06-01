@@ -39,6 +39,39 @@ export const SERVER_CONFIG = {
       FALL_SCREAM: [0.6, 1.2] // Range for trap-fall scream playback rate.
     }
   },
+  debug: {
+    events: {
+      enabled: true, // Enable server-side logging for emitted game:events payloads.
+      logUiPatch: false, // Also log the UI patch that accompanies emitted events.
+      includeRoomCode: true, // Include the room code in each debug log line.
+      onlyTypes: [
+        // Uncomment specific event names to filter logs to only those events.
+        // 'player_move',
+        'player_fall',
+        'body_fall',
+        // 'player_die',
+        'player_ghost_die',
+        // 'player_state',
+        // 'ghost_move',
+        'ghost_fall',
+        // 'ghost_state',
+        'ghost_remove',
+        'trap_open',
+        'trap_close',
+        'portal_activated',
+        'portal_removed',
+        'portal_added',
+        'portal_charged',
+        'radar_toggle',
+        'map_toggle',
+        'cheat_toggle',
+        'round_finish',
+        'exit_lock',
+        'key_dropped',
+        'key_picked_up'
+      ] // Leave all commented out to log all event types.
+    }
+  },
   vision: {
     maxSightDistance: 8 // Increase -> farther visibility/brightness reach. Decrease -> shorter visibility/darker play.
   },

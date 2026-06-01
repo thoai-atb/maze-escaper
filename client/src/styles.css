@@ -840,6 +840,20 @@ button.leave-room {
   white-space: nowrap;
 }
 
+.results-player-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.results-player-kills {
+  color: rgba(255, 255, 255, 0.88);
+  font-weight: 600;
+}
+
 .results-outcome {
   font-size: 0.68rem;
   font-weight: 600;
