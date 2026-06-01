@@ -61,6 +61,10 @@ function sameCellTrap(trap, x, y) {
   return Math.round(trap.x) === x && Math.round(trap.y) === y;
 }
 
+function trapCellKey(x, y) {
+  return `${Math.round(x)},${Math.round(y)}`;
+}
+
 function applyClientPrediction(prevSnapshot, mapPayload, mySocketId, action) {
   if (!prevSnapshot || !mapPayload || !mySocketId) return prevSnapshot;
 
@@ -128,59 +132,299 @@ function applyClientPrediction(prevSnapshot, mapPayload, mySocketId, action) {
   };
 }
 
-function reconcilePredictedMovement(prevSnapshot, incomingSnapshot, mySocketId, pendingMovesRef) {
-  if (!prevSnapshot || !incomingSnapshot || !mySocketId) return incomingSnapshot;
+function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
+  if (!prevSnapshot || !Array.isArray(events) || events.length === 0) return prevSnapshot;
 
-  const queue = pendingMovesRef.current;
-  if (!queue.length) return incomingSnapshot;
+  const next = {
+    ...prevSnapshot,
+    players: (prevSnapshot.players || []).map((p) => ({ ...p })),
+    ghosts: (prevSnapshot.ghosts || []).map((g) => ({ ...g })),
+    traps: (prevSnapshot.traps || []).map((t) => ({ ...t })),
+    portals: (prevSnapshot.portals || []).map((p) => ({ ...p })),
+    exit: prevSnapshot.exit ? { ...prevSnapshot.exit } : prevSnapshot.exit,
+    key: prevSnapshot.key ? { ...prevSnapshot.key } : prevSnapshot.key
+  };
 
-  const incomingPlayerIndex = incomingSnapshot.players.findIndex((p) => p.socketId === mySocketId);
-  if (incomingPlayerIndex < 0) return incomingSnapshot;
+  const playerIndexById = new Map(next.players.map((p, i) => [p.id, i]));
+  const ghostIndexById = new Map(next.ghosts.map((g, i) => [g.id, i]));
 
-  const incomingMe = incomingSnapshot.players[incomingPlayerIndex];
-  if (!incomingMe || incomingMe.dead || incomingMe.escaped || incomingMe.fall) {
-    queue.length = 0;
-    return incomingSnapshot;
-  }
+  const upsertTrap = (trap) => {
+    const idx = next.traps.findIndex((t) => Math.round(t.x) === Math.round(trap.x) && Math.round(t.y) === Math.round(trap.y));
+    if (idx >= 0) next.traps[idx] = { ...next.traps[idx], ...trap };
+    else next.traps.push({ ...trap });
+  };
 
-  // Consume confirmed moves in-order when server reaches predicted destination.
-  while (queue.length > 0) {
-    const head = queue[0];
-    if (incomingMe.x === head.toX && incomingMe.y === head.toY) {
-      queue.shift();
+  const closeTrap = (x, y) => {
+    next.traps = next.traps.filter((t) => !(Math.round(t.x) === Math.round(x) && Math.round(t.y) === Math.round(y)));
+  };
+
+  for (const event of events) {
+    if (!event || typeof event.type !== 'string') continue;
+
+    if (event.type === 'player_move') {
+      const idx = playerIndexById.get(event.id);
+      if (idx == null) continue;
+      next.players[idx] = {
+        ...next.players[idx],
+        x: event.x,
+        y: event.y,
+        dead: event.dead ?? next.players[idx].dead,
+        escaped: event.escaped ?? next.players[idx].escaped,
+        fall: event.fall ?? next.players[idx].fall,
+        diameter: event.diameter ?? next.players[idx].diameter,
+        hasKey: event.hasKey ?? next.players[idx].hasKey,
+        teleported: false
+      };
       continue;
     }
-    break;
+
+    if (event.type === 'player_fall') {
+      const idx = playerIndexById.get(event.id);
+      if (idx == null) continue;
+      next.players[idx] = {
+        ...next.players[idx],
+        x: event.x,
+        y: event.y,
+        fall: true,
+        teleported: false
+      };
+      continue;
+    }
+
+    if (event.type === 'player_die' || event.type === 'player_state') {
+      const idx = playerIndexById.get(event.id);
+      if (idx == null) continue;
+      next.players[idx] = {
+        ...next.players[idx],
+        x: event.x ?? next.players[idx].x,
+        y: event.y ?? next.players[idx].y,
+        dead: event.dead ?? next.players[idx].dead,
+        escaped: event.escaped ?? next.players[idx].escaped,
+        fall: event.fall ?? next.players[idx].fall,
+        diameter: event.diameter ?? next.players[idx].diameter,
+        hasKey: event.hasKey ?? next.players[idx].hasKey,
+        teleported: false
+      };
+      continue;
+    }
+
+    if (event.type === 'player_key') {
+      const idx = playerIndexById.get(event.id);
+      if (idx == null) continue;
+      next.players[idx] = { ...next.players[idx], hasKey: Boolean(event.hasKey) };
+      continue;
+    }
+
+    if (event.type === 'ghost_move') {
+      const idx = ghostIndexById.get(event.id);
+      if (idx == null) continue;
+      next.ghosts[idx] = {
+        ...next.ghosts[idx],
+        x: event.x,
+        y: event.y,
+        fall: event.fall ?? next.ghosts[idx].fall,
+        diameter: event.diameter ?? next.ghosts[idx].diameter,
+        hasKey: event.hasKey ?? next.ghosts[idx].hasKey,
+        teleported: false
+      };
+      continue;
+    }
+
+    if (event.type === 'ghost_fall' || event.type === 'ghost_state') {
+      const idx = ghostIndexById.get(event.id);
+      if (idx == null) continue;
+      next.ghosts[idx] = {
+        ...next.ghosts[idx],
+        x: event.x ?? next.ghosts[idx].x,
+        y: event.y ?? next.ghosts[idx].y,
+        fall: event.fall ?? true,
+        diameter: event.diameter ?? next.ghosts[idx].diameter,
+        hasKey: event.hasKey ?? next.ghosts[idx].hasKey
+      };
+      continue;
+    }
+
+    if (event.type === 'ghost_key') {
+      const idx = ghostIndexById.get(event.id);
+      if (idx == null) continue;
+      next.ghosts[idx] = { ...next.ghosts[idx], hasKey: Boolean(event.hasKey) };
+      continue;
+    }
+
+    if (event.type === 'ghost_remove' || event.type === 'ghost_removed') {
+      next.ghosts = next.ghosts.filter((g) => g.id !== event.id);
+      ghostIndexById.clear();
+      next.ghosts.forEach((g, i) => ghostIndexById.set(g.id, i));
+      continue;
+    }
+
+    if (event.type === 'trap_open' || event.type === 'trap_placed') {
+      const x = Number(event.x ?? event.trap?.x);
+      const y = Number(event.y ?? event.trap?.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      const outer = Number(event.outer ?? event.trap?.outer ?? 0.7) || 0.7;
+      const innerStart = Math.max(0, Number(event.innerStart ?? event.trap?.inner ?? 0) || 0);
+      const innerEnd = Math.max(0, Number(event.innerEnd ?? (outer * 0.8)) || 0);
+      const durationMs = Math.max(1, Math.round(Number(event.durationMs) || 450));
+      upsertTrap({
+        x,
+        y,
+        outer,
+        inner: innerStart,
+        set: false,
+        active: false,
+        animPhase: 'opening',
+        animStartedAtMs: nowMs,
+        animDurationMs: durationMs,
+        animFromInner: innerStart,
+        animToInner: innerEnd
+      });
+      continue;
+    }
+
+    if (event.type === 'trap_close' || event.type === 'trap_closed') {
+      const x = Number(event.x);
+      const y = Number(event.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      const existing = next.traps.find((t) => Math.round(t.x) === Math.round(x) && Math.round(t.y) === Math.round(y));
+      const outer = Number(event.outer ?? existing?.outer ?? 0.7) || 0.7;
+      const innerStart = Math.max(0, Number(event.innerStart ?? existing?.inner ?? (outer * 0.8)) || 0);
+      const durationMs = Math.max(1, Math.round(Number(event.durationMs) || 450));
+      upsertTrap({
+        x,
+        y,
+        outer,
+        inner: innerStart,
+        set: false,
+        active: false,
+        animPhase: 'closing',
+        animStartedAtMs: nowMs,
+        animDurationMs: durationMs,
+        animFromInner: innerStart,
+        animToInner: 0
+      });
+      continue;
+    }
+
+    if (event.type === 'portal_activated') {
+      if (event.actorType === 'player') {
+        const idx = playerIndexById.get(event.actorId);
+        if (idx != null) {
+          next.players[idx] = {
+            ...next.players[idx],
+            x: event.to?.x ?? next.players[idx].x,
+            y: event.to?.y ?? next.players[idx].y,
+            teleported: true
+          };
+        }
+      } else if (event.actorType === 'ghost') {
+        const idx = ghostIndexById.get(event.actorId);
+        if (idx != null) {
+          next.ghosts[idx] = {
+            ...next.ghosts[idx],
+            x: event.to?.x ?? next.ghosts[idx].x,
+            y: event.to?.y ?? next.ghosts[idx].y,
+            teleported: true
+          };
+        }
+      }
+      continue;
+    }
+
+    if (event.type === 'portal_removed') {
+      next.portals = next.portals.filter((p) => !(p.x === event.x && p.y === event.y));
+      continue;
+    }
+
+    if (event.type === 'portal_added') {
+      if (event.portal) {
+        const idx = next.portals.findIndex((p) => p.x === event.portal.x && p.y === event.portal.y);
+        if (idx >= 0) next.portals[idx] = { ...next.portals[idx], ...event.portal };
+        else next.portals.push({ ...event.portal });
+      }
+      continue;
+    }
+
+    if (event.type === 'portal_charged') {
+      const idx = next.portals.findIndex((p) => p.x === event.x && p.y === event.y);
+      if (idx >= 0) {
+        next.portals[idx] = { ...next.portals[idx], active: true };
+      } else {
+        next.portals.push({ x: event.x, y: event.y, active: true, pulse: 1 });
+      }
+      continue;
+    }
+
+    if (event.type === 'radar_toggle') {
+      next.enableRadar = Boolean(event.enabled);
+      continue;
+    }
+
+    if (event.type === 'map_toggle') {
+      next.enableMapView = Boolean(event.enabled);
+      continue;
+    }
+
+    if (event.type === 'cheat_toggle') {
+      next.cheatEnabled = Boolean(event.enabled);
+      continue;
+    }
+
+    if (event.type === 'exit_lock') {
+      next.exit = {
+        ...(next.exit || {}),
+        locked: Boolean(event.locked)
+      };
+      if (!Boolean(event.locked)) {
+        // Exit consumed the key, so clear it from the board/owners.
+        next.key = null;
+      }
+      continue;
+    }
+
+    if (event.type === 'key_dropped') {
+      next.key = {
+        type: 'cell',
+        x: Math.round(Number(event.x) || 0),
+        y: Math.round(Number(event.y) || 0)
+      };
+      continue;
+    }
+
+    if (event.type === 'key_picked_up') {
+      const ownerType = String(event.by?.type || '');
+      const ownerId = Number(event.by?.id);
+      if (!Number.isFinite(ownerId)) {
+        next.key = null;
+      } else if (ownerType === 'player') {
+        next.key = { type: 'player', playerId: ownerId };
+      } else if (ownerType === 'ghost') {
+        next.key = { type: 'ghost', ghostId: ownerId };
+      }
+      continue;
+    }
+
+    if (event.type === 'round_finish') {
+      next.finish = true;
+      if (typeof event.canRestart === 'boolean') {
+        next.canRestart = event.canRestart;
+      }
+      if (typeof event.minBright === 'number') {
+        next.minBright = event.minBright;
+      }
+      continue;
+    }
+
+    if (event.type === 'round_state') {
+      next.finish = Boolean(event.finish);
+      next.canRestart = Boolean(event.canRestart ?? next.canRestart);
+      continue;
+    }
   }
 
-  if (!queue.length) return incomingSnapshot;
-
-  const head = queue[0];
-  const ageMs = Date.now() - head.createdAt;
-  const stillAtSource = incomingMe.x === head.fromX && incomingMe.y === head.fromY;
-
-  if (stillAtSource && ageMs < MOVE_PREDICTION_GRACE_MS) {
-    const prevMe = prevSnapshot.players.find((p) => p.socketId === mySocketId);
-    if (!prevMe) return incomingSnapshot;
-
-    const players = [...incomingSnapshot.players];
-    players[incomingPlayerIndex] = {
-      ...incomingMe,
-      x: prevMe.x,
-      y: prevMe.y
-    };
-    return {
-      ...incomingSnapshot,
-      players
-    };
-  }
-
-  // Prediction timed out or server denied; drop this pending move and accept authoritative state.
-  if (stillAtSource && ageMs >= MOVE_PREDICTION_GRACE_MS) {
-    queue.shift();
-  }
-
-  return incomingSnapshot;
+  return next;
 }
 
 function levelTileColor(level, alpha = 1) {
@@ -290,6 +534,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [publicRooms, setPublicRooms] = useState([]);
   const [inputState, setInputState] = useState(initialInput);
+  const [hideGhostRadarBlips, setHideGhostRadarBlips] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(() => {
     const saved = window.localStorage.getItem('maze.sound.enabled');
     return saved == null ? true : saved === 'true';
@@ -312,6 +557,7 @@ export default function App() {
   const mapPayloadRef = useRef(null);
   const predictedTrapsRef = useRef(new Set());
   const pendingMovesRef = useRef([]);
+  const trapCloseTimersRef = useRef(new Map());
   const levelActionRef = useRef({ enabled: false, mode: 'restart' });
 
   useEffect(() => {
@@ -322,10 +568,19 @@ export default function App() {
     mapPayloadRef.current = mapPayload;
   }, [mapPayload]);
 
+  const clearTrapCloseTimers = () => {
+    for (const timerId of trapCloseTimersRef.current.values()) {
+      window.clearTimeout(timerId);
+    }
+    trapCloseTimersRef.current.clear();
+  };
+
   useEffect(() => {
     const onWelcome = (data) => setMySocketId(data.socketId);
     const onRoomUpdate = (data) => {
-      setRoomCode(data.roomCode);
+      if (typeof data?.roomCode === 'string' && data.roomCode) {
+        setRoomCode(data.roomCode);
+      }
       setRoomStatus(data.status);
       if (typeof data.status?.remainingLives === 'number') setRemainingLives(data.status.remainingLives);
       if (typeof data.status?.resultsOpened === 'boolean') setShowResults(data.status.resultsOpened);
@@ -336,8 +591,10 @@ export default function App() {
     const onGameStart = () => {
       setStarted(true);
       setSnapshot(null);
+      setHideGhostRadarBlips(false);
       setShowResults(false);
       setError('');
+      clearTrapCloseTimers();
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
     };
@@ -346,23 +603,112 @@ export default function App() {
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
     };
-    const onGameState = (data) => {
-      const incomingSnapshot = data.snapshot;
+    const onGameInit = (data) => {
+      setSnapshot(data?.snapshot || null);
+      setHideGhostRadarBlips(false);
+      if (Array.isArray(data?.levelHistory)) setLevelHistory(data.levelHistory);
+      if (typeof data?.remainingLives === 'number') setRemainingLives(data.remainingLives);
+      if (typeof data?.resultsOpened === 'boolean') setShowResults(data.resultsOpened);
+      clearTrapCloseTimers();
+      predictedTrapsRef.current.clear();
+      pendingMovesRef.current.length = 0;
+    };
+    const onGameEvents = (data) => {
+      const events = Array.isArray(data?.events) ? data.events : [];
+      const ui = data?.ui || null;
+      const nowMs = Date.now();
 
-      const selfSocketId = mySocketIdRef.current;
-      if (selfSocketId) {
-        for (const trap of incomingSnapshot?.traps || []) {
-          const key = `${Math.round(trap.x)},${Math.round(trap.y)}`;
-          if (predictedTrapsRef.current.has(key)) {
-            predictedTrapsRef.current.delete(key);
+      const radarEnabledNow = events.some((event) => event?.type === 'radar_toggle' && Boolean(event.enabled));
+      const hasFreshGhostUpdate = events.some((event) => (
+        event?.type === 'ghost_move'
+        || event?.type === 'ghost_fall'
+        || event?.type === 'ghost_state'
+        || event?.type === 'ghost_remove'
+        || event?.type === 'ghost_removed'
+      ));
+
+      if (radarEnabledNow) {
+        setHideGhostRadarBlips(!hasFreshGhostUpdate);
+      } else if (hasFreshGhostUpdate) {
+        setHideGhostRadarBlips(false);
+      }
+
+      for (const event of events) {
+        if (event?.type === 'trap_open' || (event?.type === 'trap_placed' && event.trap)) {
+          const x = Number(event.x ?? event.trap?.x);
+          const y = Number(event.y ?? event.trap?.y);
+          if (Number.isFinite(x) && Number.isFinite(y)) {
+            predictedTrapsRef.current.delete(trapCellKey(x, y));
           }
+          soundManager.play(SOUND.DOOR);
+        }
+        if (event?.type === 'trap_close' || event?.type === 'trap_closed') {
+          soundManager.play(SOUND.DOOR_CLOSE);
+
+          const x = Number(event.x);
+          const y = Number(event.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+          const key = trapCellKey(x, y);
+          const durationMs = Math.max(1, Math.round(Number(event.durationMs) || 450));
+
+          const oldTimer = trapCloseTimersRef.current.get(key);
+          if (oldTimer) {
+            window.clearTimeout(oldTimer);
+          }
+
+          const timerId = window.setTimeout(() => {
+            setSnapshot((prev) => {
+              if (!prev) return prev;
+              const filteredTraps = (prev.traps || []).filter((trap) => !sameCellTrap(trap, Math.round(x), Math.round(y)));
+              if (filteredTraps.length === (prev.traps || []).length) return prev;
+              return {
+                ...prev,
+                traps: filteredTraps
+              };
+            });
+            trapCloseTimersRef.current.delete(key);
+          }, durationMs + 32);
+
+          trapCloseTimersRef.current.set(key, timerId);
         }
       }
 
-      setSnapshot((prev) => reconcilePredictedMovement(prev, incomingSnapshot, selfSocketId, pendingMovesRef));
-      if (Array.isArray(data.levelHistory)) setLevelHistory(data.levelHistory);
-      if (typeof data.remainingLives === 'number') setRemainingLives(data.remainingLives);
-      if (typeof data.resultsOpened === 'boolean') setShowResults(data.resultsOpened);
+      setSnapshot((prev) => {
+        const next = applyGameEvents(prev, events, nowMs);
+        const selfSocketId = mySocketIdRef.current;
+        if (selfSocketId && next && pendingMovesRef.current.length > 0) {
+          const me = next.players?.find((p) => p.socketId === selfSocketId);
+          if (me) {
+            while (pendingMovesRef.current.length > 0) {
+              const head = pendingMovesRef.current[0];
+              if (me.x === head.toX && me.y === head.toY) {
+                pendingMovesRef.current.shift();
+                continue;
+              }
+              if (Date.now() - head.createdAt > MOVE_PREDICTION_GRACE_MS * 3) {
+                pendingMovesRef.current.shift();
+                continue;
+              }
+              break;
+            }
+          }
+        }
+        return next;
+      });
+
+      for (const event of events) {
+        if (event?.type === 'round_finish') {
+          if (Array.isArray(event.levelHistory)) setLevelHistory(event.levelHistory);
+          if (typeof event.remainingLives === 'number') setRemainingLives(event.remainingLives);
+          if (typeof event.resultsOpened === 'boolean') setShowResults(event.resultsOpened);
+        }
+      }
+
+      if (ui) {
+        if (Array.isArray(ui.levelHistory)) setLevelHistory(ui.levelHistory);
+        if (typeof ui.remainingLives === 'number') setRemainingLives(ui.remainingLives);
+        if (typeof ui.resultsOpened === 'boolean') setShowResults(ui.resultsOpened);
+      }
     };
     const onGameAudio = (data) => {
       const soundKey = String(data?.key || '');
@@ -380,11 +726,13 @@ export default function App() {
       setStarted(false);
       setMapPayload(null);
       setSnapshot(null);
+      setHideGhostRadarBlips(false);
       setLevelHistory([]);
       setRemainingLives(3);
       setShowResults(false);
       setInputState(initialInput);
       setError('');
+      clearTrapCloseTimers();
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
     };
@@ -393,7 +741,8 @@ export default function App() {
     socket.on('room:update', onRoomUpdate);
     socket.on('game:start', onGameStart);
     socket.on('game:map', onGameMap);
-    socket.on('game:state', onGameState);
+    socket.on('game:init', onGameInit);
+    socket.on('game:events', onGameEvents);
     socket.on('game:audio', onGameAudio);
     socket.on('room:list:update', onRoomListUpdate);
     socket.on('room:left', onRoomLeft);
@@ -405,11 +754,13 @@ export default function App() {
     });
 
     return () => {
+      clearTrapCloseTimers();
       socket.off('welcome', onWelcome);
       socket.off('room:update', onRoomUpdate);
       socket.off('game:start', onGameStart);
       socket.off('game:map', onGameMap);
-      socket.off('game:state', onGameState);
+      socket.off('game:init', onGameInit);
+      socket.off('game:events', onGameEvents);
       socket.off('game:audio', onGameAudio);
       socket.off('room:list:update', onRoomListUpdate);
       socket.off('room:left', onRoomLeft);
@@ -673,16 +1024,14 @@ export default function App() {
         if (teleportedStarted) {
           soundManager.play(SOUND.PORTAL);
         }
+
+        if (!prevGhost.fall && ghost.fall) {
+          soundManager.play(SOUND.GHOST_FADE);
+        }
       }
 
       if (prev.exit?.locked && snapshot.exit && !snapshot.exit.locked) {
         soundManager.play(SOUND.DOOR_UNLOCK);
-      }
-      if ((snapshot.traps?.length || 0) > (prev.traps?.length || 0)) {
-        soundManager.play(SOUND.DOOR);
-      }
-      if ((snapshot.traps?.length || 0) < (prev.traps?.length || 0)) {
-        soundManager.play(SOUND.DOOR_CLOSE);
       }
     }
 
@@ -930,6 +1279,7 @@ export default function App() {
             snapshot={snapshot}
             mapPayload={mapPayload}
             radarActive={Boolean(snapshot?.enableRadar)}
+            hideGhostRadarBlips={hideGhostRadarBlips}
             mapActive={Boolean(snapshot?.enableMapView)}
             enterHintText={enterHintText}
             fullScreen

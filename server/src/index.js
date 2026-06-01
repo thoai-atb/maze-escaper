@@ -160,6 +160,353 @@ function buildDynamicSnapshot(room, fullSnapshot) {
   };
 }
 
+function withPlayerRtt(snapshot) {
+  return {
+    ...snapshot,
+    players: (snapshot.players || []).map((player) => ({
+      ...player,
+      rttMs: player.socketId ? (rttBySocket.get(player.socketId) ?? null) : null
+    }))
+  };
+}
+
+function buildUiState(room) {
+  return {
+    levelHistory: getLevelResults(room),
+    remainingLives: room.remainingLives,
+    resultsOpened: room.resultsOpened
+  };
+}
+
+function buildUiPatch(prevUi, nextUi) {
+  if (!prevUi) return nextUi;
+
+  const patch = {};
+  if (prevUi.remainingLives !== nextUi.remainingLives) patch.remainingLives = nextUi.remainingLives;
+  if (prevUi.resultsOpened !== nextUi.resultsOpened) patch.resultsOpened = nextUi.resultsOpened;
+  if (JSON.stringify(prevUi.levelHistory) !== JSON.stringify(nextUi.levelHistory)) {
+    patch.levelHistory = nextUi.levelHistory;
+  }
+
+  return Object.keys(patch).length ? patch : null;
+}
+
+function mapById(items = []) {
+  const byId = new Map();
+  for (const item of items) byId.set(item.id, item);
+  return byId;
+}
+
+function trapKey(trap) {
+  return `${Math.round(trap.x)},${Math.round(trap.y)}`;
+}
+
+function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
+  if (!prevSnapshot || !nextSnapshot) return [];
+
+  const events = [];
+  const prevPlayersById = mapById(prevSnapshot.players || []);
+  const nextPlayersById = mapById(nextSnapshot.players || []);
+  const prevGhostsById = mapById(prevSnapshot.ghosts || []);
+  const nextGhostsById = mapById(nextSnapshot.ghosts || []);
+
+  const ghostCols = fullSnapshot?.cols ?? nextSnapshot.cols;
+  const sightRadius = Number(SERVER_CONFIG.vision?.maxSightDistance) || 8;
+  const activePlayers = (nextSnapshot.players || []).filter((p) => Number(p.dead) === 0 && Number(p.escaped) === 0);
+  const inSightRadiusOfAnyPlayer = (x, y) => {
+    for (const player of activePlayers) {
+      const dx = Number(player.x) - Number(x);
+      const dy = Number(player.y) - Number(y);
+      if ((dx * dx + dy * dy) <= (sightRadius * sightRadius)) return true;
+    }
+    return false;
+  };
+  const isCellVisible = (x, y) => {
+    if (!fullSnapshot?.cells) return true;
+    const idx = Math.round(y) * ghostCols + Math.round(x);
+    return Boolean(fullSnapshot.cells[idx]?.inSight);
+  };
+  const isGhostVisible = (ghost, prevGhost = null) => {
+    if (Boolean(nextSnapshot.finish) || Boolean(nextSnapshot.enableRadar) || Boolean(nextSnapshot.cheatEnabled)) return true;
+    if (isCellVisible(ghost.x, ghost.y)) return true;
+    if (inSightRadiusOfAnyPlayer(ghost.x, ghost.y)) return true;
+    if (prevGhost && isCellVisible(prevGhost.x, prevGhost.y)) return true;
+    if (prevGhost && inSightRadiusOfAnyPlayer(prevGhost.x, prevGhost.y)) return true;
+    return false;
+  };
+
+  const keyOwner = (key) => {
+    if (!key || typeof key !== 'object') return null;
+    if (key.type === 'player' && Number.isFinite(Number(key.playerId))) {
+      return { type: 'player', id: Number(key.playerId) };
+    }
+    if (key.type === 'ghost' && Number.isFinite(Number(key.ghostId))) {
+      return { type: 'ghost', id: Number(key.ghostId) };
+    }
+    return null;
+  };
+
+  for (const player of nextSnapshot.players || []) {
+    const prevPlayer = prevPlayersById.get(player.id);
+    if (!prevPlayer) continue;
+
+    const moved = player.x !== prevPlayer.x || player.y !== prevPlayer.y;
+    if (moved) {
+      events.push({
+        type: 'player_move',
+        id: player.id,
+        x: player.x,
+        y: player.y,
+        dead: player.dead,
+        escaped: player.escaped,
+        fall: player.fall,
+        diameter: player.diameter,
+        hasKey: player.hasKey
+      });
+    }
+
+    if (!prevPlayer.fall && player.fall) {
+      events.push({ type: 'player_fall', id: player.id, x: player.x, y: player.y });
+    }
+
+    if (prevPlayer.dead === 0 && player.dead === 1) {
+      events.push({ type: 'player_die', id: player.id, x: player.x, y: player.y, dead: player.dead });
+    }
+
+    const playerStateChanged = (
+      prevPlayer.dead !== player.dead
+      || prevPlayer.escaped !== player.escaped
+      || Boolean(prevPlayer.fall) !== Boolean(player.fall)
+      || Number(prevPlayer.diameter) !== Number(player.diameter)
+      || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
+    );
+
+    if (playerStateChanged) {
+      events.push({
+        type: 'player_state',
+        id: player.id,
+        dead: player.dead,
+        escaped: player.escaped,
+        fall: player.fall,
+        diameter: player.diameter,
+        hasKey: player.hasKey
+      });
+    }
+
+    const teleportedStarted = Boolean(player.teleported) && !Boolean(prevPlayer.teleported);
+    if (teleportedStarted) {
+      events.push({
+        type: 'portal_activated',
+        actorType: 'player',
+        actorId: player.id,
+        from: { x: prevPlayer.x, y: prevPlayer.y },
+        to: { x: player.x, y: player.y }
+      });
+    }
+  }
+
+  for (const ghost of nextSnapshot.ghosts || []) {
+    const prevGhost = prevGhostsById.get(ghost.id);
+    if (!prevGhost) continue;
+    if (!isGhostVisible(ghost, prevGhost)) continue;
+
+    const moved = ghost.x !== prevGhost.x || ghost.y !== prevGhost.y;
+    if (moved) {
+      events.push({
+        type: 'ghost_move',
+        id: ghost.id,
+        x: ghost.x,
+        y: ghost.y,
+        fall: ghost.fall,
+        diameter: ghost.diameter,
+        hasKey: ghost.hasKey,
+        crazy: ghost.crazy
+      });
+    }
+
+    if (!prevGhost.fall && ghost.fall) {
+      events.push({ type: 'ghost_fall', id: ghost.id, x: ghost.x, y: ghost.y });
+    }
+
+    const ghostStateChanged = (
+      Boolean(prevGhost.fall) !== Boolean(ghost.fall)
+      || Number(prevGhost.diameter) !== Number(ghost.diameter)
+      || Boolean(prevGhost.hasKey) !== Boolean(ghost.hasKey)
+    );
+
+    if (ghostStateChanged) {
+      events.push({
+        type: 'ghost_state',
+        id: ghost.id,
+        fall: ghost.fall,
+        diameter: ghost.diameter,
+        hasKey: ghost.hasKey,
+        crazy: ghost.crazy
+      });
+    }
+
+    const teleportedStarted = Boolean(ghost.teleported) && !Boolean(prevGhost.teleported);
+    if (teleportedStarted) {
+      events.push({
+        type: 'portal_activated',
+        actorType: 'ghost',
+        actorId: ghost.id,
+        from: { x: prevGhost.x, y: prevGhost.y },
+        to: { x: ghost.x, y: ghost.y }
+      });
+    }
+  }
+
+  for (const prevGhost of prevSnapshot.ghosts || []) {
+    if (!nextGhostsById.has(prevGhost.id)) {
+      events.push({ type: 'ghost_remove', id: prevGhost.id });
+    }
+  }
+
+  const prevTrapsByKey = new Map((prevSnapshot.traps || []).map((trap) => [trapKey(trap), trap]));
+  const nextTrapsByKey = new Map((nextSnapshot.traps || []).map((trap) => [trapKey(trap), trap]));
+
+  const tickMs = Math.max(1, Number(SERVER_CONFIG.net?.tickIntervalMs) || 1);
+  const trapRatePerMs = Math.max(0.00001, Number(SERVER_CONFIG.trap?.openCloseRatePerMs) || 0.0012);
+  const toTickDuration = (ms) => Math.max(tickMs, Math.ceil(Math.max(0, Number(ms) || 0) / tickMs) * tickMs);
+  const openDurationMsFor = (trap) => {
+    const outer = Number(trap?.outer) || 0.7;
+    const innerStart = Math.max(0, Number(trap?.inner) || 0);
+    const innerTarget = outer * 0.8;
+    return toTickDuration((innerTarget - innerStart) / trapRatePerMs);
+  };
+  const closeDurationMsForInner = (innerStart) => {
+    const safeInnerStart = Math.max(0, Number(innerStart) || 0);
+    return toTickDuration(safeInnerStart / trapRatePerMs);
+  };
+
+  for (const [key, trap] of nextTrapsByKey.entries()) {
+    if (!prevTrapsByKey.has(key)) {
+      const outer = Number(trap.outer) || 0.7;
+      events.push({
+        type: 'trap_open',
+        x: trap.x,
+        y: trap.y,
+        outer,
+        innerStart: 0,
+        innerEnd: outer * 0.8,
+        durationMs: openDurationMsFor(trap)
+      });
+      continue;
+    }
+
+    const prevTrap = prevTrapsByKey.get(key);
+    if (prevTrap.active && !trap.active) {
+      const outer = Number(trap.outer) || Number(prevTrap.outer) || 0.7;
+      const innerStart = Number(prevTrap.inner) || (outer * 0.8);
+      events.push({
+        type: 'trap_close',
+        x: trap.x,
+        y: trap.y,
+        outer,
+        innerStart,
+        innerEnd: 0,
+        durationMs: closeDurationMsForInner(innerStart)
+      });
+    }
+  }
+
+  for (const [key, trap] of prevTrapsByKey.entries()) {
+    if (!nextTrapsByKey.has(key) && Boolean(trap.active)) {
+      const outer = Number(trap.outer) || 0.7;
+      const innerStart = Number(trap.inner) || 0;
+      events.push({
+        type: 'trap_close',
+        x: trap.x,
+        y: trap.y,
+        outer,
+        innerStart,
+        innerEnd: 0,
+        durationMs: closeDurationMsForInner(innerStart)
+      });
+    }
+  }
+
+  const prevPortalsByKey = new Map((prevSnapshot.portals || []).map((portal) => [`${portal.x},${portal.y}`, portal]));
+  const nextPortalsByKey = new Map((nextSnapshot.portals || []).map((portal) => [`${portal.x},${portal.y}`, portal]));
+
+  for (const [key, prevPortal] of prevPortalsByKey.entries()) {
+    if (!nextPortalsByKey.has(key)) {
+      events.push({ type: 'portal_removed', x: prevPortal.x, y: prevPortal.y });
+    }
+  }
+
+  for (const [key, portal] of nextPortalsByKey.entries()) {
+    if (!prevPortalsByKey.has(key)) {
+      events.push({ type: 'portal_added', portal });
+    }
+  }
+
+  for (const portal of nextSnapshot.portals || []) {
+    const prevPortal = prevPortalsByKey.get(`${portal.x},${portal.y}`);
+    if (prevPortal && !prevPortal.active && portal.active) {
+      events.push({ type: 'portal_charged', x: portal.x, y: portal.y });
+    }
+  }
+
+  if (Boolean(prevSnapshot.enableRadar) !== Boolean(nextSnapshot.enableRadar)) {
+    events.push({ type: 'radar_toggle', enabled: Boolean(nextSnapshot.enableRadar) });
+  }
+
+  if (Boolean(prevSnapshot.enableMapView) !== Boolean(nextSnapshot.enableMapView)) {
+    events.push({ type: 'map_toggle', enabled: Boolean(nextSnapshot.enableMapView) });
+  }
+
+  if (Boolean(prevSnapshot.cheatEnabled) !== Boolean(nextSnapshot.cheatEnabled)) {
+    events.push({ type: 'cheat_toggle', enabled: Boolean(nextSnapshot.cheatEnabled) });
+  }
+
+  if (!prevSnapshot.finish && nextSnapshot.finish) {
+    events.push({ type: 'round_finish', canRestart: Boolean(nextSnapshot.canRestart), minBright: nextSnapshot.minBright });
+  }
+
+  if ((prevSnapshot.exit?.locked ?? null) !== (nextSnapshot.exit?.locked ?? null)) {
+    events.push({ type: 'exit_lock', locked: Boolean(nextSnapshot.exit?.locked) });
+  }
+
+  const prevKeyOwner = keyOwner(prevSnapshot.key);
+  const nextKeyOwner = keyOwner(nextSnapshot.key);
+  const ownerChanged = (
+    (prevKeyOwner?.type ?? null) !== (nextKeyOwner?.type ?? null)
+    || (prevKeyOwner?.id ?? null) !== (nextKeyOwner?.id ?? null)
+  );
+
+  if (nextSnapshot.key?.type === 'cell') {
+    const keyX = Math.round(Number(nextSnapshot.key.x) || 0);
+    const keyY = Math.round(Number(nextSnapshot.key.y) || 0);
+    const prevWasSameCell = prevSnapshot.key?.type === 'cell'
+      && Math.round(Number(prevSnapshot.key.x) || 0) === keyX
+      && Math.round(Number(prevSnapshot.key.y) || 0) === keyY;
+
+    if (!prevWasSameCell) {
+      events.push({ type: 'key_dropped', x: keyX, y: keyY });
+    }
+  }
+
+  if (nextKeyOwner && ownerChanged) {
+    events.push({ type: 'key_picked_up', by: nextKeyOwner });
+  }
+
+  return events;
+}
+
+function emitGameInit(ioServer, roomCode, room, snapshot) {
+  const uiState = buildUiState(room);
+  ioServer.to(roomCode).emit('game:init', {
+    snapshot,
+    levelHistory: uiState.levelHistory,
+    remainingLives: uiState.remainingLives,
+    resultsOpened: uiState.resultsOpened
+  });
+  room.lastSnapshotForEvents = snapshot;
+  room.lastUiState = uiState;
+}
+
 function getRoundDurationMs(room, now = Date.now()) {
   if (!room.roundStartedAt) return 0;
   const effectiveNow = room.roundFinishedAt || now;
@@ -274,7 +621,9 @@ function createRoom({ hostSocketId, hostName, maxPlayers }) {
     resultPlayerIds: [],
     remainingLives: INITIAL_LIVES,
     failurePenaltyApplied: false,
-    playerAudioStateById: new Map()
+    playerAudioStateById: new Map(),
+    lastSnapshotForEvents: null,
+    lastUiState: null
   };
 
   const attached = engine.attachPlayer(hostSocketId, hostName || 'Host');
@@ -322,7 +671,6 @@ function leaveCurrentRoom(socketId) {
   }
 
   io.to(roomCode).emit('room:update', {
-    roomCode,
     status: {
       ...getStatusWithRtt(room),
       remainingLives: room.remainingLives,
@@ -344,7 +692,6 @@ function emitRoomUpdate(roomCode) {
   if (!room) return;
 
   io.to(roomCode).emit('room:update', {
-    roomCode,
     status: {
       ...getStatusWithRtt(room),
       remainingLives: room.remainingLives,
@@ -476,8 +823,9 @@ io.on('connection', (socket) => {
     room.started = true;
     room.mapVersion += 1;
     room.playerAudioStateById = new Map();
+    room.lastSnapshotForEvents = null;
+    room.lastUiState = null;
     io.to(roomCode).emit('game:start', {
-      roomCode,
       status: {
         ...getStatusWithRtt(room),
         remainingLives: room.remainingLives,
@@ -485,9 +833,9 @@ io.on('connection', (socket) => {
       }
     });
     io.to(roomCode).emit('game:map', {
-      roomCode,
       map: getMapPayload(room)
     });
+    emitGameInit(io, roomCode, room, withPlayerRtt(buildDynamicSnapshot(room, room.engine.getSnapshot())));
     emitRoomUpdate(roomCode);
     emitRoomList();
     cb?.({ ok: true });
@@ -525,9 +873,10 @@ io.on('connection', (socket) => {
     room.resultsOpened = false;
     room.mapVersion += 1;
     room.playerAudioStateById = new Map();
+    room.lastSnapshotForEvents = null;
+    room.lastUiState = null;
 
     io.to(roomCode).emit('game:start', {
-      roomCode,
       status: {
         ...getStatusWithRtt(room),
         remainingLives: room.remainingLives,
@@ -535,9 +884,9 @@ io.on('connection', (socket) => {
       }
     });
     io.to(roomCode).emit('game:map', {
-      roomCode,
       map: getMapPayload(room)
     });
+    emitGameInit(io, roomCode, room, withPlayerRtt(buildDynamicSnapshot(room, room.engine.getSnapshot())));
     emitRoomUpdate(roomCode);
     emitRoomList();
     cb?.({ ok: true });
@@ -577,9 +926,10 @@ io.on('connection', (socket) => {
     room.resultsOpened = false;
     room.mapVersion += 1;
     room.playerAudioStateById = new Map();
+    room.lastSnapshotForEvents = null;
+    room.lastUiState = null;
 
     io.to(roomCode).emit('game:start', {
-      roomCode,
       status: {
         ...getStatusWithRtt(room),
         remainingLives: room.remainingLives,
@@ -587,9 +937,9 @@ io.on('connection', (socket) => {
       }
     });
     io.to(roomCode).emit('game:map', {
-      roomCode,
       map: getMapPayload(room)
     });
+    emitGameInit(io, roomCode, room, withPlayerRtt(buildDynamicSnapshot(room, room.engine.getSnapshot())));
     emitRoomUpdate(roomCode);
     emitRoomList();
     cb?.({ ok: true });
@@ -717,14 +1067,9 @@ setInterval(() => {
 
     room.engine.update(dt, inputQueueBySocket);
     const fullSnapshot = room.engine.getSnapshot();
-    const snapshot = buildDynamicSnapshot(room, fullSnapshot);
+    const snapshot = withPlayerRtt(buildDynamicSnapshot(room, fullSnapshot));
 
     emitPlayerDeathAudioEvents(io, roomCode, room, snapshot);
-
-    snapshot.players = snapshot.players.map((player) => ({
-      ...player,
-      rttMs: player.socketId ? (rttBySocket.get(player.socketId) ?? null) : null
-    }));
 
     if (snapshot.finish && !room.roundFinishedAt) {
       room.roundFinishedAt = Date.now();
@@ -742,13 +1087,26 @@ setInterval(() => {
       }
     }
 
-    io.to(roomCode).emit('game:state', {
-      roomCode,
-      snapshot,
-      levelHistory: getLevelResults(room),
-      remainingLives: room.remainingLives,
-      resultsOpened: room.resultsOpened
-    });
+    const previousSnapshot = room.lastSnapshotForEvents;
+    if (!previousSnapshot) {
+      room.lastSnapshotForEvents = snapshot;
+      room.lastUiState = buildUiState(room);
+      continue;
+    }
+
+    const events = buildDeltaEvents(previousSnapshot, snapshot, fullSnapshot);
+    const nextUiState = buildUiState(room);
+    const uiPatch = buildUiPatch(room.lastUiState, nextUiState);
+
+    if (events.length > 0 || uiPatch) {
+      io.to(roomCode).emit('game:events', {
+        events,
+        ui: uiPatch
+      });
+    }
+
+    room.lastSnapshotForEvents = snapshot;
+    room.lastUiState = nextUiState;
   }
 }, SERVER_CONFIG.net.tickIntervalMs);
 

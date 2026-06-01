@@ -1,5 +1,9 @@
 import { TILE_COLOR_CONFIG, getTileThemeByLevel } from '../config';
 
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
 function fillRect(ctx, x, y, w, h, color) {
   ctx.fillStyle = color;
   ctx.fillRect(x, y, w, h);
@@ -263,7 +267,8 @@ function drawMapOverlay(ctx, snapshot, unit, stroke) {
   ctx.restore();
 }
 
-function drawRadarOverlay(ctx, snapshot, unit, cols) {
+function drawRadarOverlay(ctx, snapshot, unit, cols, options = {}) {
+  const { hideGhostBlips = false } = options;
   ctx.save();
   const dotRadius = Math.max(2, unit * 0.08);
 
@@ -282,15 +287,17 @@ function drawRadarOverlay(ctx, snapshot, unit, cols) {
     ctx.fill();
   }
 
-  for (const ghost of snapshot.ghosts) {
-    const gx = Math.round(ghost.cx);
-    const gy = Math.round(ghost.cy);
-    const cell = snapshot.cells[gy * cols + gx];
-    if (cell?.inSight) continue;
-    ctx.fillStyle = '#ff4444';
-    ctx.beginPath();
-    ctx.arc((ghost.cx + 0.5) * unit, (ghost.cy + 0.5) * unit, dotRadius, 0, Math.PI * 2);
-    ctx.fill();
+  if (!hideGhostBlips) {
+    for (const ghost of snapshot.ghosts) {
+      const gx = Math.round(ghost.cx);
+      const gy = Math.round(ghost.cy);
+      const cell = snapshot.cells[gy * cols + gx];
+      if (cell?.inSight) continue;
+      ctx.fillStyle = '#ff4444';
+      ctx.beginPath();
+      ctx.arc((ghost.cx + 0.5) * unit, (ghost.cy + 0.5) * unit, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   if (snapshot.key) {
@@ -410,7 +417,14 @@ function roundedRectPath(ctx, x, y, w, h, r) {
 export function drawGame(ctx, snapshot, width, height, options = {}) {
   if (!snapshot) return;
 
-  const { radarActive = false, mapActive = false, enterHintText = '', animationTimeMs = 0 } = options;
+  const {
+    radarActive = false,
+    hideGhostRadarBlips = false,
+    mapActive = false,
+    enterHintText = '',
+    animationTimeMs = 0,
+    wallClockMs = Date.now()
+  } = options;
 
   const { rows, cols } = snapshot;
   const unit = height / rows;
@@ -586,46 +600,32 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
       if (trapCell.bright <= snapshot.minBright) continue;
     }
 
+    const outer = Math.max(0, Number(trap.outer) || 0.7);
+    let inner = Math.max(0, Number(trap.inner) || 0);
+
+    if (typeof trap.animStartedAtMs === 'number' && typeof trap.animDurationMs === 'number') {
+      const fromInner = Math.max(0, Number(trap.animFromInner) || inner);
+      const toInner = Math.max(0, Number(trap.animToInner) || 0);
+      const duration = Math.max(1, Number(trap.animDurationMs) || 1);
+      const t = clamp((wallClockMs - trap.animStartedAtMs) / duration, 0, 1);
+      inner = fromInner + (toInner - fromInner) * t;
+
+      if (trap.animPhase === 'closing' && t >= 1) {
+        continue;
+      }
+    }
+
     const cx = (trap.x + 0.5) * unit;
     const cy = (trap.y + 0.5) * unit;
     ctx.strokeStyle = '#111';
     ctx.lineWidth = stroke / 3;
-    ctx.strokeRect(cx - (trap.outer * unit) / 2, cy - (trap.outer * unit) / 2, trap.outer * unit, trap.outer * unit);
+    ctx.strokeRect(cx - (outer * unit) / 2, cy - (outer * unit) / 2, outer * unit, outer * unit);
     ctx.fillStyle = '#000';
-    ctx.fillRect(cx - (trap.inner * unit) / 2, cy - (trap.outer * unit) / 2, trap.inner * unit, trap.outer * unit);
+    ctx.fillRect(cx - (inner * unit) / 2, cy - (outer * unit) / 2, inner * unit, outer * unit);
   }
 
   if (snapshot.key?.type === 'cell') {
     drawKey(ctx, snapshot.key.x * unit, snapshot.key.y * unit, unit, 1);
-  }
-
-  for (const ghost of snapshot.ghosts) {
-    const cell = snapshot.cells[Math.round(ghost.cy) * cols + Math.round(ghost.cx)];
-    if (!cell?.inSight) continue;
-    const ghostDiameter = ghost.diameter ?? 0.5;
-    const isFalling = Boolean(ghost.fall);
-    const fallProgress = isFalling ? Math.max(0, Math.min(1, 1 - ghostDiameter / 0.5)) : 0;
-    const alpha = isFalling ? Math.max(0.2, Math.min(0.9, ghostDiameter * 1.6)) : 1;
-    ctx.fillStyle = ghost.crazy
-      ? `rgba(216, 216, 216, ${alpha})`
-      : `rgba(165, 165, 165, ${alpha})`;
-
-    const cx = (ghost.cx + 0.5) * unit;
-    const cy = (ghost.cy + 0.5) * unit + fallProgress * unit * 0.1;
-    const radius = unit * 0.22 * ghostDiameter * 2;
-    ctx.save();
-    ctx.translate(cx, cy);
-    if (isFalling) {
-      ctx.scale(1 + fallProgress * 0.28, 1 - fallProgress * 0.42);
-    }
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    if (ghost.hasKey) {
-      drawKey(ctx, ghost.cx * unit, ghost.cy * unit, unit, 0.45);
-    }
   }
 
   if (snapshot.exit) {
@@ -682,6 +682,35 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     }
   }
 
+  for (const ghost of snapshot.ghosts) {
+    const cell = snapshot.cells[Math.round(ghost.cy) * cols + Math.round(ghost.cx)];
+    if (!cell?.inSight) continue;
+    const ghostDiameter = ghost.diameter ?? 0.5;
+    const isFalling = Boolean(ghost.fall);
+    const fallProgress = isFalling ? Math.max(0, Math.min(1, 1 - ghostDiameter / 0.5)) : 0;
+    const alpha = isFalling ? Math.max(0.2, Math.min(0.9, ghostDiameter * 1.6)) : 1;
+    ctx.fillStyle = ghost.crazy
+      ? `rgba(216, 216, 216, ${alpha})`
+      : `rgba(165, 165, 165, ${alpha})`;
+
+    const cx = (ghost.cx + 0.5) * unit;
+    const cy = (ghost.cy + 0.5) * unit + fallProgress * unit * 0.1;
+    const radius = unit * 0.22 * ghostDiameter * 2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (isFalling) {
+      ctx.scale(1 + fallProgress * 0.28, 1 - fallProgress * 0.42);
+    }
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    if (ghost.hasKey) {
+      drawKey(ctx, ghost.cx * unit, ghost.cy * unit, unit, 0.45);
+    }
+  }
+
   drawParticles(ctx, snapshot, unit);
 
   for (const player of snapshot.players) {
@@ -706,7 +735,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
   }
 
   if (radarActive) {
-    drawRadarOverlay(ctx, snapshot, unit, cols);
+    drawRadarOverlay(ctx, snapshot, unit, cols, { hideGhostBlips: hideGhostRadarBlips });
   }
 
   if (snapshot.finish) {

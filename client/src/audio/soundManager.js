@@ -10,7 +10,8 @@ const SOUND_FILES = {
   EXIT: '/audio/exit.wav',
   PORTAL: '/audio/portal.wav',
   DOOR_CLOSE: '/audio/trapdoor_close.wav',
-  KEY: '/audio/key.wav'
+  KEY: '/audio/key.wav',
+  GHOST_FADE: '/audio/ghost_fade.wav'
 };
 
 class SoundManager {

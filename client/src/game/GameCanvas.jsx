@@ -3,6 +3,7 @@ import { drawGame } from './drawGame';
 import { MOVEMENT_INTERPOLATION_CONFIG } from '../config';
 
 const PLAYER_SAME_TILE_SPREAD = 0.15;
+const PLAYER_FALL_SHRINK_MS = 375;
 
 function spawnBurst(particles, x, y, color, count = 12, speed = 1) {
   for (let i = 0; i < count; i += 1) {
@@ -90,7 +91,16 @@ function isBlocked(cell, dx, dy) {
   return false;
 }
 
-function buildRenderSnapshot(dynamicSnapshot, mapPayload, exploredSet, playerLerpMap, ghostLerpMap) {
+function buildRenderSnapshot(
+  dynamicSnapshot,
+  mapPayload,
+  exploredSet,
+  playerLerpMap,
+  ghostLerpMap,
+  finishBrightOverride = null,
+  animationTimeMs = 0,
+  playerFallStartedAtMap = new Map()
+) {
   if (!dynamicSnapshot || !mapPayload) return null;
 
   const rows = mapPayload.rows;
@@ -123,24 +133,14 @@ function buildRenderSnapshot(dynamicSnapshot, mapPayload, exploredSet, playerLer
   }
 
   if (dynamicSnapshot.finish) {
-    if (visiblePlayers.length === 0) {
-      for (let i = 0; i < cells.length; i += 1) {
-        cells[i].inSight = true;
-        cells[i].bright = minBright;
-      }
-    } else {
-      for (let y = 0; y < rows; y += 1) {
-        for (let x = 0; x < cols; x += 1) {
-          let nearest = Infinity;
-          for (const p of visiblePlayers) {
-            const d = Math.hypot(x - p.x, y - p.y);
-            if (d < nearest) nearest = d;
-          }
-          const idx = y * cols + x;
-          cells[idx].inSight = true;
-          cells[idx].bright = brightFromDistance(nearest, maxSightDistance, minBright);
-        }
-      }
+    const finishBright = clamp(
+      Number(finishBrightOverride ?? dynamicSnapshot.minBright ?? 100),
+      Number(dynamicSnapshot.minBright) || 0,
+      100
+    );
+    for (let i = 0; i < cells.length; i += 1) {
+      cells[i].inSight = true;
+      cells[i].bright = finishBright;
     }
   } else {
     const dirs = [
@@ -242,6 +242,16 @@ function buildRenderSnapshot(dynamicSnapshot, mapPayload, exploredSet, playerLer
       'player',
       MOVEMENT_INTERPOLATION_CONFIG.playerLerpFactor
     );
+    const fallStartedAt = playerFallStartedAtMap.get(p.id);
+    if (p.fall && typeof fallStartedAt === 'number') {
+      const t = clamp((animationTimeMs - fallStartedAt) / PLAYER_FALL_SHRINK_MS, 0, 1);
+      const localDiameter = 0.5 - (0.5 - 0.05) * t;
+      p = {
+        ...p,
+        diameter: Math.min(Number(p.diameter) || 0.5, localDiameter)
+      };
+    }
+
     return {
       ...p,
       cx: pos.cx,
@@ -302,6 +312,7 @@ function buildRenderSnapshot(dynamicSnapshot, mapPayload, exploredSet, playerLer
     walls,
     players,
     ghosts,
+    traps: dynamicSnapshot.traps || [],
     particles: dynamicSnapshot.particles || []
   };
 }
@@ -310,6 +321,7 @@ export default function GameCanvas({
   snapshot,
   mapPayload,
   radarActive,
+  hideGhostRadarBlips = false,
   mapActive,
   enterHintText = '',
   fullScreen = false,
@@ -326,6 +338,8 @@ export default function GameCanvas({
   const localParticlesRef = useRef([]);
   const prevDynamicRef = useRef(null);
   const lastFrameTimeRef = useRef(0);
+  const finishFadeStartRef = useRef(0);
+  const playerFallStartedAtRef = useRef(new Map());
 
   const getCanvasSize = () => {
     const viewportW = window.innerWidth;
@@ -380,6 +394,8 @@ export default function GameCanvas({
     localParticlesRef.current = [];
     prevDynamicRef.current = null;
     lastFrameTimeRef.current = 0;
+    finishFadeStartRef.current = 0;
+    playerFallStartedAtRef.current = new Map();
   }, [mapPayload]);
 
   useEffect(() => {
@@ -402,6 +418,22 @@ export default function GameCanvas({
       const prevDynamic = prevDynamicRef.current;
       if (latestDynamic && latestDynamic !== prevDynamic) {
         addTransitionParticles(prevDynamic, latestDynamic, localParticlesRef.current);
+
+        const stillFalling = new Set();
+        for (const player of latestDynamic.players || []) {
+          if (player.fall) {
+            stillFalling.add(player.id);
+            if (!playerFallStartedAtRef.current.has(player.id)) {
+              playerFallStartedAtRef.current.set(player.id, nowMs);
+            }
+          }
+        }
+        for (const id of Array.from(playerFallStartedAtRef.current.keys())) {
+          if (!stillFalling.has(id)) {
+            playerFallStartedAtRef.current.delete(id);
+          }
+        }
+
         prevDynamicRef.current = latestDynamic;
       }
 
@@ -409,12 +441,26 @@ export default function GameCanvas({
       lastFrameTimeRef.current = nowMs;
       updateParticles(localParticlesRef.current, dtMs);
 
+      let finishBright = null;
+      if (latestDynamic?.finish) {
+        if (!finishFadeStartRef.current) finishFadeStartRef.current = nowMs;
+        const startBright = Number(latestDynamic.minBright) || 0;
+        const elapsedMs = Math.max(0, nowMs - finishFadeStartRef.current);
+        // Match server fade pace (100 brightness per second) without per-tick network state.
+        finishBright = clamp(startBright + elapsedMs * 0.1, startBright, 100);
+      } else {
+        finishFadeStartRef.current = 0;
+      }
+
       const renderSnapshot = buildRenderSnapshot(
         latestDynamic,
         latestMap,
         exploredRef.current,
         playerLerpRef.current,
-        ghostLerpRef.current
+        ghostLerpRef.current,
+        finishBright,
+        nowMs,
+        playerFallStartedAtRef.current
       );
 
       if (renderSnapshot) {
@@ -424,9 +470,11 @@ export default function GameCanvas({
         ];
         drawGame(ctx, renderSnapshot, size.width, size.height, {
           radarActive,
+          hideGhostRadarBlips,
           mapActive,
           enterHintText,
-          animationTimeMs: nowMs
+          animationTimeMs: nowMs,
+          wallClockMs: Date.now()
         });
       }
 
@@ -438,7 +486,7 @@ export default function GameCanvas({
     return () => {
       window.cancelAnimationFrame(frameRef.current);
     };
-  }, [enterHintText, mapActive, radarActive, size.height, size.width]);
+  }, [enterHintText, hideGhostRadarBlips, mapActive, radarActive, size.height, size.width]);
 
   return <canvas ref={canvasRef} className="game-canvas" aria-label="Maze game board" />;
 }
