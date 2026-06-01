@@ -13,6 +13,7 @@ const initialInput = {
 };
 
 const PLAYER_NAME_STORAGE_KEY = 'maze.player.name';
+const MOVE_PREDICTION_GRACE_MS = 160;
 
 function getViewportSize() {
   const visual = window.visualViewport;
@@ -37,6 +38,149 @@ function keyToInput(key) {
   if (k === 'arrowright' || k === 'd') return 'right';
   if (k === ' ') return 'trap';
   return null;
+}
+
+function actionToDelta(action) {
+  if (action === 'up') return { dx: 0, dy: -1 };
+  if (action === 'down') return { dx: 0, dy: 1 };
+  if (action === 'left') return { dx: -1, dy: 0 };
+  if (action === 'right') return { dx: 1, dy: 0 };
+  return { dx: 0, dy: 0 };
+}
+
+function hasBlockingWall(cell, action) {
+  if (!cell) return true;
+  if (action === 'up') return Boolean(cell.wallT);
+  if (action === 'down') return Boolean(cell.wallB);
+  if (action === 'left') return Boolean(cell.wallL);
+  if (action === 'right') return Boolean(cell.wallR);
+  return true;
+}
+
+function sameCellTrap(trap, x, y) {
+  return Math.round(trap.x) === x && Math.round(trap.y) === y;
+}
+
+function applyClientPrediction(prevSnapshot, mapPayload, mySocketId, action) {
+  if (!prevSnapshot || !mapPayload || !mySocketId) return prevSnapshot;
+
+  const playerIndex = prevSnapshot.players.findIndex((p) => p.socketId === mySocketId);
+  if (playerIndex < 0) return prevSnapshot;
+
+  const me = prevSnapshot.players[playerIndex];
+  if (!me || me.dead || me.escaped || me.fall) return prevSnapshot;
+
+  if (action === 'trap') {
+    const trapExists = (prevSnapshot.traps || []).some((t) => sameCellTrap(t, me.x, me.y));
+    if (trapExists) return prevSnapshot;
+
+    return {
+      ...prevSnapshot,
+      traps: [
+        ...(prevSnapshot.traps || []),
+        {
+          x: me.x,
+          y: me.y,
+          outer: 0.7,
+          inner: 0,
+          set: false,
+          active: false
+        }
+      ]
+    };
+  }
+
+  const { dx, dy } = actionToDelta(action);
+  if (dx === 0 && dy === 0) return prevSnapshot;
+
+  const rows = mapPayload.rows;
+  const cols = mapPayload.cols;
+  const currentX = me.x;
+  const currentY = me.y;
+
+  const exitRow = prevSnapshot.exit?.y ?? mapPayload.exit?.y;
+  if (action === 'right' && currentX === cols - 1 && currentY === exitRow && !prevSnapshot.exit?.locked) {
+    const nextPlayers = [...prevSnapshot.players];
+    nextPlayers[playerIndex] = {
+      ...me,
+      x: cols,
+      escaped: true
+    };
+    return {
+      ...prevSnapshot,
+      players: nextPlayers
+    };
+  }
+
+  const nextX = currentX + dx;
+  const nextY = currentY + dy;
+  if (nextX < 0 || nextY < 0 || nextX >= cols || nextY >= rows) return prevSnapshot;
+
+  const currentCell = mapPayload.cells[currentY * cols + currentX];
+  if (hasBlockingWall(currentCell, action)) return prevSnapshot;
+
+  const nextPlayers = [...prevSnapshot.players];
+  nextPlayers[playerIndex] = { ...me, x: nextX, y: nextY };
+
+  return {
+    ...prevSnapshot,
+    players: nextPlayers
+  };
+}
+
+function reconcilePredictedMovement(prevSnapshot, incomingSnapshot, mySocketId, pendingMovesRef) {
+  if (!prevSnapshot || !incomingSnapshot || !mySocketId) return incomingSnapshot;
+
+  const queue = pendingMovesRef.current;
+  if (!queue.length) return incomingSnapshot;
+
+  const incomingPlayerIndex = incomingSnapshot.players.findIndex((p) => p.socketId === mySocketId);
+  if (incomingPlayerIndex < 0) return incomingSnapshot;
+
+  const incomingMe = incomingSnapshot.players[incomingPlayerIndex];
+  if (!incomingMe || incomingMe.dead || incomingMe.escaped || incomingMe.fall) {
+    queue.length = 0;
+    return incomingSnapshot;
+  }
+
+  // Consume confirmed moves in-order when server reaches predicted destination.
+  while (queue.length > 0) {
+    const head = queue[0];
+    if (incomingMe.x === head.toX && incomingMe.y === head.toY) {
+      queue.shift();
+      continue;
+    }
+    break;
+  }
+
+  if (!queue.length) return incomingSnapshot;
+
+  const head = queue[0];
+  const ageMs = Date.now() - head.createdAt;
+  const stillAtSource = incomingMe.x === head.fromX && incomingMe.y === head.fromY;
+
+  if (stillAtSource && ageMs < MOVE_PREDICTION_GRACE_MS) {
+    const prevMe = prevSnapshot.players.find((p) => p.socketId === mySocketId);
+    if (!prevMe) return incomingSnapshot;
+
+    const players = [...incomingSnapshot.players];
+    players[incomingPlayerIndex] = {
+      ...incomingMe,
+      x: prevMe.x,
+      y: prevMe.y
+    };
+    return {
+      ...incomingSnapshot,
+      players
+    };
+  }
+
+  // Prediction timed out or server denied; drop this pending move and accept authoritative state.
+  if (stillAtSource && ageMs >= MOVE_PREDICTION_GRACE_MS) {
+    queue.shift();
+  }
+
+  return incomingSnapshot;
 }
 
 function levelTileColor(level, alpha = 1) {
@@ -164,6 +308,18 @@ export default function App() {
   const heldKeysRef = useRef(new Set());
   const inputStateRef = useRef(initialInput);
   const roundOverlayRef = useRef(null);
+  const mySocketIdRef = useRef('');
+  const mapPayloadRef = useRef(null);
+  const predictedTrapsRef = useRef(new Set());
+  const pendingMovesRef = useRef([]);
+
+  useEffect(() => {
+    mySocketIdRef.current = mySocketId;
+  }, [mySocketId]);
+
+  useEffect(() => {
+    mapPayloadRef.current = mapPayload;
+  }, [mapPayload]);
 
   useEffect(() => {
     const onWelcome = (data) => setMySocketId(data.socketId);
@@ -181,12 +337,28 @@ export default function App() {
       setSnapshot(null);
       setShowResults(false);
       setError('');
+      predictedTrapsRef.current.clear();
+      pendingMovesRef.current.length = 0;
     };
     const onGameMap = (data) => {
       setMapPayload(data?.map || null);
+      predictedTrapsRef.current.clear();
+      pendingMovesRef.current.length = 0;
     };
     const onGameState = (data) => {
-      setSnapshot(data.snapshot);
+      const incomingSnapshot = data.snapshot;
+
+      const selfSocketId = mySocketIdRef.current;
+      if (selfSocketId) {
+        for (const trap of incomingSnapshot?.traps || []) {
+          const key = `${Math.round(trap.x)},${Math.round(trap.y)}`;
+          if (predictedTrapsRef.current.has(key)) {
+            predictedTrapsRef.current.delete(key);
+          }
+        }
+      }
+
+      setSnapshot((prev) => reconcilePredictedMovement(prev, incomingSnapshot, selfSocketId, pendingMovesRef));
       if (Array.isArray(data.levelHistory)) setLevelHistory(data.levelHistory);
       if (typeof data.remainingLives === 'number') setRemainingLives(data.remainingLives);
       if (typeof data.resultsOpened === 'boolean') setShowResults(data.resultsOpened);
@@ -206,6 +378,8 @@ export default function App() {
       setShowResults(false);
       setInputState(initialInput);
       setError('');
+      predictedTrapsRef.current.clear();
+      pendingMovesRef.current.length = 0;
     };
 
     socket.on('welcome', onWelcome);
@@ -310,6 +484,43 @@ export default function App() {
       const next = { ...inputStateRef.current, [mapped]: true };
       inputStateRef.current = next;
       setInputState(next);
+
+      setSnapshot((prev) => {
+        const meBefore = prev?.players?.find((p) => p.socketId === mySocketIdRef.current) || null;
+        const nextSnapshot = applyClientPrediction(
+          prev,
+          mapPayloadRef.current,
+          mySocketIdRef.current,
+          mapped
+        );
+
+        if (mapped !== 'trap' && meBefore) {
+          const meAfter = nextSnapshot?.players?.find((p) => p.socketId === mySocketIdRef.current) || null;
+          const moved = Boolean(meAfter) && (meAfter.x !== meBefore.x || meAfter.y !== meBefore.y);
+          if (moved) {
+            pendingMovesRef.current.push({
+              fromX: meBefore.x,
+              fromY: meBefore.y,
+              toX: meAfter.x,
+              toY: meAfter.y,
+              createdAt: Date.now()
+            });
+            if (pendingMovesRef.current.length > 8) {
+              pendingMovesRef.current.shift();
+            }
+          }
+        }
+
+        if (mapped === 'trap' && nextSnapshot !== prev) {
+          const me = prev?.players?.find((p) => p.socketId === mySocketIdRef.current);
+          if (me) {
+            predictedTrapsRef.current.add(`${me.x},${me.y}`);
+          }
+        }
+
+        return nextSnapshot;
+      });
+
       socket.emit('input:enqueue', { action: mapped });
     };
 
@@ -380,45 +591,42 @@ export default function App() {
     }
 
     const prev = prevSnapshotRef.current;
-    const me = snapshot.players?.find((p) => p.socketId === mySocketId);
-    const prevMe = prev?.players?.find((p) => p.socketId === mySocketId);
-
-    if (me && prevMe) {
-      if (!prevMe.hasKey && me.hasKey) soundManager.play(SOUND.KEY);
-      if (prevMe.dead === 0 && me.dead === 1 && !prevMe.fall && !me.fall) soundManager.play(SOUND.SCREAM);
-      if (!prevMe.fall && me.fall) soundManager.play(SOUND.FALL_SCREAM);
-      if (!prevMe.escaped && me.escaped) soundManager.play(SOUND.EXIT);
-
-      const dx = me.x - prevMe.x;
-      const dy = me.y - prevMe.y;
-      const movedTile = dx !== 0 || dy !== 0;
-      if (movedTile && !me.dead && !me.escaped) {
-        if (Math.abs(dx) + Math.abs(dy) === 1) soundManager.play(SOUND.STEP);
-        else soundManager.play(SOUND.PORTAL);
-      }
-    }
-
-    if (!prevMapGadgetRef.current && hasMapGadget) {
-      soundManager.play(SOUND.MAP);
-    }
-    if (!prevRadarGadgetRef.current && hasRadarGadget) {
-      soundManager.play(SOUND.RADAR);
-    }
 
     if (prev) {
-      if (prev.exit?.locked && snapshot.exit && !snapshot.exit.locked) {
-        soundManager.play(SOUND.DOOR_UNLOCK);
-      }
-
+      let revivedAny = false;
       for (const player of snapshot.players || []) {
         if (!player.socketId) continue;
         const prevPlayer = prev.players?.find((p) => p.id === player.id);
-        if (prevPlayer?.dead === 1 && player.dead === 0) {
+        if (!prevPlayer) continue;
+
+        if (prevPlayer.dead === 0 && player.dead === 1 && !prevPlayer.fall && !player.fall) soundManager.play(SOUND.SCREAM);
+        if (!prevPlayer.fall && player.fall) soundManager.play(SOUND.FALL_SCREAM);
+        if (!prevPlayer.hasKey && player.hasKey) soundManager.play(SOUND.KEY);
+        if (!prevPlayer.escaped && player.escaped) soundManager.play(SOUND.EXIT);
+        if (!revivedAny && prevPlayer.dead === 1 && player.dead === 0) {
           soundManager.play(SOUND.REVIVAL);
-          break;
+          revivedAny = true;
+        }
+
+        const dx = player.x - prevPlayer.x;
+        const dy = player.y - prevPlayer.y;
+        const movedTile = dx !== 0 || dy !== 0;
+        if (movedTile && !player.dead && !player.escaped) {
+          if (Math.abs(dx) + Math.abs(dy) === 1) soundManager.play(SOUND.STEP);
+          else soundManager.play(SOUND.PORTAL);
+        }
+
+        if (mapPayload && movedTile && !player.dead && !player.escaped) {
+          const cell = mapPayload.cells?.[player.y * mapPayload.cols + player.x];
+          const prevCell = mapPayload.cells?.[prevPlayer.y * mapPayload.cols + prevPlayer.x];
+          if (cell?.type === 2 && prevCell?.type !== 2) soundManager.play(SOUND.MAP);
+          if (cell?.type === 1 && prevCell?.type !== 1) soundManager.play(SOUND.RADAR);
         }
       }
 
+      if (prev.exit?.locked && snapshot.exit && !snapshot.exit.locked) {
+        soundManager.play(SOUND.DOOR_UNLOCK);
+      }
       if ((snapshot.traps?.length || 0) > (prev.traps?.length || 0)) {
         soundManager.play(SOUND.DOOR);
       }
@@ -430,7 +638,7 @@ export default function App() {
     prevMapGadgetRef.current = hasMapGadget;
     prevRadarGadgetRef.current = hasRadarGadget;
     prevSnapshotRef.current = snapshot;
-  }, [hasMapGadget, hasRadarGadget, mySocketId, snapshot, started]);
+  }, [hasMapGadget, hasRadarGadget, mapPayload, snapshot, started]);
 
   useEffect(() => {
     if (!roomCode) return undefined;

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { drawGame } from './drawGame';
 import { MOVEMENT_INTERPOLATION_CONFIG } from '../config';
 
+const PLAYER_SAME_TILE_SPREAD = 0.15;
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
@@ -134,9 +136,39 @@ function buildRenderSnapshot(dynamicSnapshot, mapPayload, exploredSet, playerLer
     return prev;
   };
 
+  // Build same-tile spread offsets first, then lerp players toward adjusted targets.
+  const playerOffsetById = new Map();
+  const groupedPlayers = new Map();
+  for (const player of dynamicSnapshot.players || []) {
+    if (!player.socketId || player.escaped) continue;
+    if (!(player.dead === 0 || player.dead === 1)) continue;
+    const groupKey = `${player.x},${player.y}`;
+    if (!groupedPlayers.has(groupKey)) groupedPlayers.set(groupKey, []);
+    groupedPlayers.get(groupKey).push(player);
+  }
+
+  for (const group of groupedPlayers.values()) {
+    if (group.length <= 1) continue;
+    group.sort((a, b) => a.id - b.id);
+    for (let i = 0; i < group.length; i += 1) {
+      const angle = (Math.PI * 2 * i) / group.length;
+      playerOffsetById.set(group[i].id, {
+        dx: Math.cos(angle) * PLAYER_SAME_TILE_SPREAD,
+        dy: Math.sin(angle) * PLAYER_SAME_TILE_SPREAD
+      });
+    }
+  }
+
   const players = (dynamicSnapshot.players || []).map((p) => {
+    const offset = playerOffsetById.get(p.id) || { dx: 0, dy: 0 };
+    const adjusted = {
+      ...p,
+      x: p.x + offset.dx,
+      y: p.y + offset.dy
+    };
+
     const pos = interpolateEntity(
-      p,
+      adjusted,
       playerLerpMap,
       'player',
       MOVEMENT_INTERPOLATION_CONFIG.playerLerpFactor
