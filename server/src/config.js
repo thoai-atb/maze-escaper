@@ -16,7 +16,7 @@ export const SERVER_CONFIG = {
   },
   ghost: {
     moveMs: 700, // Increase -> normal ghosts move less often (easier). Decrease -> move more often (harder).
-    crazyMoveMs: 90, // Increase -> crazy ghosts less frantic. Decrease -> more frantic.
+    crazySpeedMultiplier: 3, // Crazy ghosts step 3x as often as normal while following paths.
     spawnChance: 0.03, // Increase -> more ghosts on average. Decrease -> fewer ghosts.
     crazyChance: 0.15 // Increase -> more spawned ghosts are crazy. Decrease -> fewer crazy ghosts.
   },

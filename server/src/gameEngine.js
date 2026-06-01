@@ -233,7 +233,12 @@ export class GameEngine {
           fall: false,
           crazy: Math.random() < SERVER_CONFIG.ghost.crazyChance,
           lastMoveAt: 0,
-          diameter: 0.5
+          diameter: 0.5,
+          route: [],
+          targetX: null,
+          targetY: null,
+          routeStartedAt: 0,
+          restUntilMs: 0
         });
         const g = this.ghosts[this.ghosts.length - 1];
         g.cx = g.x;
@@ -411,18 +416,22 @@ export class GameEngine {
         continue;
       }
 
-      const moveDelay = ghost.crazy ? SERVER_CONFIG.ghost.crazyMoveMs : SERVER_CONFIG.ghost.moveMs;
-      if (this.tickMs - ghost.lastMoveAt >= moveDelay) {
-        const dirs = ['up', 'down', 'left', 'right'];
-        let moved = false;
-        for (let i = 0; i < 8 && !moved; i++) {
-          const dir = pickRandom(dirs);
-          if (this._canMove(ghost, dir, false)) {
-            this._applyMove(ghost, dir);
-            moved = true;
+      if (ghost.crazy) {
+        this._updateCrazyGhost(ghost);
+      } else {
+        const moveDelay = SERVER_CONFIG.ghost.moveMs;
+        if (this.tickMs - ghost.lastMoveAt >= moveDelay) {
+          const dirs = ['up', 'down', 'left', 'right'];
+          let moved = false;
+          for (let i = 0; i < 8 && !moved; i++) {
+            const dir = pickRandom(dirs);
+            if (this._canMove(ghost, dir, false)) {
+              this._applyMove(ghost, dir);
+              moved = true;
+            }
           }
+          ghost.lastMoveAt = this.tickMs;
         }
-        ghost.lastMoveAt = this.tickMs;
       }
 
       for (const player of this.players) {
@@ -446,6 +455,151 @@ export class GameEngine {
     }
 
     this.ghosts = this.ghosts.filter((g) => !g.dead);
+  }
+
+  _updateCrazyGhost(ghost) {
+    const speedMultiplier = Math.max(1, Number(SERVER_CONFIG.ghost.crazySpeedMultiplier) || 3);
+    const moveDelay = Math.max(1, Math.floor(SERVER_CONFIG.ghost.moveMs / speedMultiplier));
+
+    if (ghost.restUntilMs > this.tickMs) {
+      return;
+    }
+
+    if (this.tickMs - ghost.lastMoveAt < moveDelay) {
+      return;
+    }
+
+    if (!Array.isArray(ghost.route)) ghost.route = [];
+
+    const nextStep = ghost.route[0];
+    if (nextStep) {
+      const adjacent = Math.abs(nextStep.x - ghost.x) + Math.abs(nextStep.y - ghost.y) === 1;
+      if (!adjacent) {
+        ghost.route = [];
+        ghost.targetX = null;
+        ghost.targetY = null;
+        ghost.routeStartedAt = 0;
+      }
+    }
+
+    if (ghost.route.length === 0) {
+      this._prepareCrazyGhostRoute(ghost);
+      if (ghost.route.length === 0) {
+        ghost.lastMoveAt = this.tickMs;
+        return;
+      }
+    }
+
+    const step = ghost.route[0];
+    const dir = this._dirFromDelta(step.x - ghost.x, step.y - ghost.y);
+    if (!dir || !this._canMove(ghost, dir, false)) {
+      ghost.route = [];
+      ghost.targetX = null;
+      ghost.targetY = null;
+      ghost.routeStartedAt = 0;
+      ghost.lastMoveAt = this.tickMs;
+      return;
+    }
+
+    this._applyMove(ghost, dir);
+    ghost.route.shift();
+    ghost.lastMoveAt = this.tickMs;
+
+    if (ghost.route.length === 0) {
+      const travelMs = Math.max(0, this.tickMs - (ghost.routeStartedAt || this.tickMs));
+      ghost.restUntilMs = this.tickMs + travelMs;
+      ghost.targetX = null;
+      ghost.targetY = null;
+      ghost.routeStartedAt = 0;
+    }
+  }
+
+  _prepareCrazyGhostRoute(ghost) {
+    const maxAttempts = 16;
+
+    for (let i = 0; i < maxAttempts; i += 1) {
+      const tx = randInt(0, this.cols);
+      const ty = randInt(0, this.rows);
+      if (tx === ghost.x && ty === ghost.y) continue;
+
+      const route = this._findShortestRoute(ghost.x, ghost.y, tx, ty);
+      if (!route || route.length === 0) continue;
+
+      ghost.route = route;
+      ghost.targetX = tx;
+      ghost.targetY = ty;
+      ghost.routeStartedAt = this.tickMs;
+      ghost.restUntilMs = 0;
+      return;
+    }
+
+    ghost.route = [];
+    ghost.targetX = null;
+    ghost.targetY = null;
+    ghost.routeStartedAt = 0;
+    ghost.restUntilMs = 0;
+  }
+
+  _findShortestRoute(startX, startY, targetX, targetY) {
+    if (startX === targetX && startY === targetY) return [];
+
+    const startKey = keyOf(startX, startY, this.cols);
+    const targetKey = keyOf(targetX, targetY, this.cols);
+
+    const queue = [startKey];
+    const visited = new Set([startKey]);
+    const parent = new Map();
+
+    while (queue.length > 0) {
+      const currentKey = queue.shift();
+      if (currentKey === targetKey) break;
+
+      const cx = currentKey % this.cols;
+      const cy = Math.floor(currentKey / this.cols);
+      const currentCell = this._getCell(cx, cy);
+      if (!currentCell) continue;
+
+      const neighbors = [
+        { x: cx, y: cy - 1, blocked: currentCell.wallT?.enable },
+        { x: cx, y: cy + 1, blocked: currentCell.wallB?.enable },
+        { x: cx - 1, y: cy, blocked: currentCell.wallL?.enable },
+        { x: cx + 1, y: cy, blocked: currentCell.wallR?.enable }
+      ];
+
+      for (const neighbor of neighbors) {
+        if (neighbor.blocked) continue;
+        if (neighbor.x < 0 || neighbor.y < 0 || neighbor.x >= this.cols || neighbor.y >= this.rows) continue;
+
+        const neighborKey = keyOf(neighbor.x, neighbor.y, this.cols);
+        if (visited.has(neighborKey)) continue;
+        visited.add(neighborKey);
+        parent.set(neighborKey, currentKey);
+        queue.push(neighborKey);
+      }
+    }
+
+    if (!visited.has(targetKey)) return [];
+
+    const route = [];
+    let cursor = targetKey;
+    while (cursor !== startKey) {
+      const x = cursor % this.cols;
+      const y = Math.floor(cursor / this.cols);
+      route.push({ x, y });
+      cursor = parent.get(cursor);
+      if (cursor == null) return [];
+    }
+
+    route.reverse();
+    return route;
+  }
+
+  _dirFromDelta(dx, dy) {
+    if (dx === 1 && dy === 0) return 'right';
+    if (dx === -1 && dy === 0) return 'left';
+    if (dx === 0 && dy === 1) return 'down';
+    if (dx === 0 && dy === -1) return 'up';
+    return null;
   }
 
   _updateParticles(dtMs) {
@@ -613,9 +767,22 @@ export class GameEngine {
         this._spawnHealParticles(entity.x, entity.y, '#c58dff', 12, 1.2);
         if (entity.id) this._markCellExplored(entity.x, entity.y);
         this._checkKeyPickup(entity);
+
+        if (entity.ghostId && entity.crazy) {
+          this._resetCrazyGhostCycle(entity);
+        }
         return;
       }
     }
+  }
+
+  _resetCrazyGhostCycle(ghost) {
+    ghost.route = [];
+    ghost.targetX = null;
+    ghost.targetY = null;
+    ghost.routeStartedAt = 0;
+    ghost.restUntilMs = 0;
+    ghost.lastMoveAt = this.tickMs;
   }
 
   _markCellExplored(x, y) {
