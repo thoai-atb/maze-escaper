@@ -347,11 +347,13 @@ export class GameEngine {
       if (player.fall) {
         player.diameter = Math.max(0, player.diameter - dtMs * 0.0012);
         if (player.diameter <= 0.05) {
+          const trapX = player.x;
+          const trapY = player.y;
           player.fall = false;
           player.dead = 1;
           player.diameter = 0.5;
           player.reviveStartedAt = 0;
-          this._relocateDownedPlayer(player);
+          this._relocateDownedPlayer(player, trapX, trapY);
           this._spawnHealParticles(player.cx, player.cy, player.color, 14, 0.8);
         }
       }
@@ -739,7 +741,7 @@ export class GameEngine {
       if (trap.x === ex && trap.y === ey) {
         trap.timerMs = 0;
         if (downedPlayer) {
-          this._relocateDownedPlayer(entity);
+          this._relocateDownedPlayer(entity, trap.x, trap.y);
           entity.reviveStartedAt = 0;
           return;
         }
@@ -831,9 +833,14 @@ export class GameEngine {
     portal.activationMs = SERVER_CONFIG.world.portalReloadMs;
   }
 
-  _updateKeyOwnerOnDeath(player) {
+  _updateKeyOwnerOnDeath(player, dropX = null, dropY = null) {
     if (!this.keyOwner || this.keyOwner.type !== 'player' || this.keyOwner.playerId !== player.id) return;
-    this.keyOwner = { type: 'cell', x: Math.round(player.cx), y: Math.round(player.cy) };
+    const hasDropOverride = Number.isFinite(dropX) && Number.isFinite(dropY);
+    this.keyOwner = {
+      type: 'cell',
+      x: hasDropOverride ? Math.round(dropX) : Math.round(player.cx),
+      y: hasDropOverride ? Math.round(dropY) : Math.round(player.cy)
+    };
   }
 
   _updateKeyOwnerOnGhostDeath(ghost) {
@@ -841,7 +848,7 @@ export class GameEngine {
     this.keyOwner = { type: 'cell', x: Math.round(ghost.cx), y: Math.round(ghost.cy) };
   }
 
-  _relocateDownedPlayer(player) {
+  _relocateDownedPlayer(player, keyDropX = null, keyDropY = null) {
     const nextX = randInt(0, this.cols);
     const nextY = randInt(0, this.rows);
     player.x = nextX;
@@ -850,7 +857,7 @@ export class GameEngine {
     player.fy = nextY;
     player.cx = nextX;
     player.cy = nextY;
-    this._updateKeyOwnerOnDeath(player);
+    this._updateKeyOwnerOnDeath(player, keyDropX, keyDropY);
   }
 
   _spawnHealParticles(x, y, color, count = 12, speed = 1) {

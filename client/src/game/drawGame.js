@@ -624,10 +624,6 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     ctx.fillRect(cx - (inner * unit) / 2, cy - (outer * unit) / 2, inner * unit, outer * unit);
   }
 
-  if (snapshot.key?.type === 'cell') {
-    drawKey(ctx, snapshot.key.x * unit, snapshot.key.y * unit, unit, 1);
-  }
-
   if (snapshot.exit) {
     const ex = snapshot.exit.x * unit;
     const ey = snapshot.exit.y * unit;
@@ -682,6 +678,10 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     }
   }
 
+  if (snapshot.key?.type === 'cell') {
+    drawKey(ctx, snapshot.key.x * unit, snapshot.key.y * unit, unit, 1);
+  }
+
   for (const ghost of snapshot.ghosts) {
     const cell = snapshot.cells[Math.round(ghost.cy) * cols + Math.round(ghost.cx)];
     if (!cell?.inSight) continue;
@@ -690,8 +690,8 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     const fallProgress = isFalling ? Math.max(0, Math.min(1, 1 - ghostDiameter / 0.5)) : 0;
     const alpha = isFalling ? Math.max(0.2, Math.min(0.9, ghostDiameter * 1.6)) : 1;
     ctx.fillStyle = ghost.crazy
-      ? `rgba(216, 216, 216, ${alpha})`
-      : `rgba(165, 165, 165, ${alpha})`;
+      ? `rgba(255, 255, 255, ${alpha})`
+      : `rgba(255, 255, 255, ${alpha})`;
 
     const cx = (ghost.cx + 0.5) * unit;
     const cy = (ghost.cy + 0.5) * unit + fallProgress * unit * 0.1;
