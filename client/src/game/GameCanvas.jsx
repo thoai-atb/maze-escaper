@@ -46,7 +46,8 @@ function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
 
     const teleportedStarted = Boolean(player.teleported) && !Boolean(prevPlayer.teleported);
     if (teleportedStarted) {
-      spawnBurst(particles, player.x, player.y, '#c58dff', 12, 1.15);
+      spawnBurst(particles, prevPlayer.x, prevPlayer.y, '#c58dff', 10, 1.15);
+      spawnBurst(particles, player.x, player.y, '#c58dff', 12, 1.2);
     }
 
     const threwSomewhere = player.dead === 1
@@ -54,6 +55,11 @@ function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
       && (player.x !== prevPlayer.x || player.y !== prevPlayer.y);
     if (threwSomewhere) {
       spawnBurst(particles, player.x, player.y, player.color || '#d8d8d8', 14, 0.9);
+    }
+
+    const revived = prevPlayer.dead === 1 && player.dead === 0;
+    if (revived) {
+      spawnBurst(particles, prevPlayer.x, prevPlayer.y, player.color || '#d8d8d8', 18, 1);
     }
   }
 
@@ -63,13 +69,22 @@ function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
 
     const teleportedStarted = Boolean(ghost.teleported) && !Boolean(prevGhost.teleported);
     if (teleportedStarted) {
-      spawnBurst(particles, ghost.x, ghost.y, '#c58dff', 12, 1.15);
+      spawnBurst(particles, prevGhost.x, prevGhost.y, '#c58dff', 10, 1.15);
+      spawnBurst(particles, ghost.x, ghost.y, '#c58dff', 12, 1.2);
     }
 
     const ghostFellIntoTrap = !prevGhost.fall && ghost.fall;
     if (ghostFellIntoTrap) {
       const ghostColor = ghost.crazy ? '#d8d8d8' : '#a5a5a5';
       spawnBurst(particles, ghost.x, ghost.y, ghostColor, 14, 0.8);
+    }
+  }
+
+  for (const prevGhost of prevSnapshot.ghosts || []) {
+    const stillExists = (nextSnapshot.ghosts || []).some((ghost) => ghost.id === prevGhost.id);
+    if (!stillExists && prevGhost.fall) {
+      const ghostColor = prevGhost.crazy ? '#d8d8d8' : '#a5a5a5';
+      spawnBurst(particles, prevGhost.x, prevGhost.y, ghostColor, 12, 0.75);
     }
   }
 }

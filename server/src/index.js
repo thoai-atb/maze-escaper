@@ -77,6 +77,10 @@ function emitPlayerDeathAudioEvents(ioServer, roomCode, room, snapshot) {
       emitRoomAudio(ioServer, roomCode, 'SCREAM');
     }
 
+    if (previous.dead === 0 && current.dead !== 0) {
+      inputQueueBySocket.delete(player.socketId);
+    }
+
     if (!previous.fall && current.fall) {
       emitRoomAudio(ioServer, roomCode, 'FALL_SCREAM');
     }

@@ -91,12 +91,12 @@ function cellColor(bright, type, enabled, explored, level) {
   return explored ? toHsl(levelTheme.visited) : toHsl(levelTheme.unvisited);
 }
 
-function drawCellGlyph(ctx, cell, x, y, unit, stroke) {
+function drawCellGlyph(ctx, cell, x, y, unit, stroke, glyphColor = '#111') {
   if (cell.type === 1) {
     const size = unit * 0.62;
     ctx.save();
     ctx.translate(x + unit / 2, y + unit / 2);
-    ctx.strokeStyle = '#111';
+    ctx.strokeStyle = glyphColor;
     ctx.lineWidth = stroke / 2;
     ctx.beginPath();
     ctx.arc(0, 0, size / 2, 0, Math.PI * 1.5);
@@ -123,8 +123,8 @@ function drawCellGlyph(ctx, cell, x, y, unit, stroke) {
     ctx.save();
     ctx.translate(x + unit / 2, y + unit / 2);
 
-    // Draw a clean black frame with black grid lines.
-    ctx.strokeStyle = '#111';
+    // Draw a clean frame and grid lines.
+    ctx.strokeStyle = glyphColor;
     ctx.lineWidth = stroke / 2;
     ctx.strokeRect(-frameHalfW, -frameHalfH, frameWidth, frameHeight);
 
@@ -213,8 +213,10 @@ function drawWallColumns(ctx, snapshot, unit, stroke) {
 
 function drawMapOverlay(ctx, snapshot, unit, stroke) {
   ctx.save();
-  ctx.strokeStyle = snapshot.finish ? 'rgba(0, 0, 0, 1)' : 'rgba(220, 220, 220, 0.7)';
-  ctx.lineWidth = Math.max(1, stroke / 3);
+  const mapOverlayStroke = snapshot.finish ? 'rgba(0, 0, 0, 1)' : 'rgba(220, 220, 220, 0.7)';
+  const mapOverlayLineWidth = Math.max(1, stroke / 3);
+  ctx.strokeStyle = mapOverlayStroke;
+  ctx.lineWidth = mapOverlayLineWidth;
 
   for (const wall of snapshot.walls) {
     if (!wall.enable) continue;
@@ -264,6 +266,15 @@ function drawMapOverlay(ctx, snapshot, unit, stroke) {
     ctx.stroke();
   }
 
+  // Reveal radar/map gadget locations on map view using the same glyph shapes in white.
+  for (const cell of snapshot.cells) {
+    if (cell.type !== 1 && cell.type !== 2) continue;
+    const visibleNow = cell.inSight && cell.bright > snapshot.minBright && !snapshot.finish;
+    if (visibleNow) continue;
+    // Match map overlay line tone/weight for subtle gadget hints.
+    drawCellGlyph(ctx, cell, cell.x * unit, cell.y * unit, unit, mapOverlayLineWidth * 2, mapOverlayStroke);
+  }
+
   ctx.restore();
 }
 
@@ -298,6 +309,21 @@ function drawRadarOverlay(ctx, snapshot, unit, cols, options = {}) {
       ctx.arc((ghost.cx + 0.5) * unit, (ghost.cy + 0.5) * unit, dotRadius, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  // Show black holes (portals) on radar as small purple rings, not filled dots.
+  ctx.strokeStyle = '#c58dff';
+  ctx.lineWidth = Math.max(1.25, unit * 0.03);
+  for (const portal of snapshot.portals || []) {
+    const px = Math.round(portal.x);
+    const py = Math.round(portal.y);
+    const cell = snapshot.cells[py * cols + px];
+    if (cell?.inSight) continue;
+
+    const radius = Math.max(dotRadius * 1.25, unit * 0.11);
+    ctx.beginPath();
+    ctx.arc((portal.x + 0.5) * unit, (portal.y + 0.5) * unit, radius, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   if (snapshot.key) {

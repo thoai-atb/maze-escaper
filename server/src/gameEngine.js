@@ -43,7 +43,6 @@ export class GameEngine {
     this.ghosts = [];
     this.portals = [];
     this.traps = [];
-    this.particles = [];
 
     this.exit = { x: this.cols - 1, y: randInt(0, this.rows) };
     this.exitLocked = true;
@@ -317,7 +316,6 @@ export class GameEngine {
     this._updatePlayers(dtMs, inputQueueBySocket);
     this._updateGhosts(dtMs);
     this._updateTraps(dtMs);
-    this._updateParticles(dtMs);
     this._arrangeAllPlayers();
 
     if (this.finish) {
@@ -354,7 +352,6 @@ export class GameEngine {
           player.diameter = 0.5;
           player.reviveStartedAt = 0;
           this._relocateDownedPlayer(player, trapX, trapY);
-          this._spawnHealParticles(player.cx, player.cy, player.color, 14, 0.8);
         }
       }
 
@@ -365,10 +362,12 @@ export class GameEngine {
         if (this._hasActivePlayerAt(player.x, player.y)) {
           if (!player.reviveStartedAt) player.reviveStartedAt = this.tickMs;
           if (this.tickMs - player.reviveStartedAt >= SERVER_CONFIG.player.reviveMs) {
+            const reviveFromX = player.x;
+            const reviveFromY = player.y;
             player.dead = 0;
             player.reviveStartedAt = 0;
             player.diameter = 0.5;
-            this._spawnHealParticles(player.cx, player.cy, player.color, 18, 1);
+            this._moveRevivedPlayerOneStep(player, reviveFromX, reviveFromY);
           }
         } else {
           player.reviveStartedAt = 0;
@@ -422,7 +421,6 @@ export class GameEngine {
         if (ghost.diameter <= 0.05) {
           this._updateKeyOwnerOnGhostDeath(ghost);
           ghost.dead = true;
-          this._spawnHealParticles(ghost.cx, ghost.cy, ghost.crazy ? '#d8d8d8' : '#a5a5a5', 12, 0.75);
         }
         continue;
       }
@@ -613,18 +611,6 @@ export class GameEngine {
     return null;
   }
 
-  _updateParticles(dtMs) {
-    for (const particle of this.particles) {
-      particle.life -= dtMs;
-      particle.x += particle.vx * dtMs;
-      particle.y += particle.vy * dtMs;
-      particle.vx *= 0.985;
-      particle.vy *= 0.985;
-    }
-
-    this.particles = this.particles.filter((p) => p.life > 0);
-  }
-
   _updateTraps(dtMs) {
     for (const trap of this.traps) {
       if (!trap.set) {
@@ -657,37 +643,6 @@ export class GameEngine {
     player.cx = nextX;
     player.cy = nextY;
     this._updateKeyOwnerOnDeath(player);
-  }
-
-  _spawnHealParticles(x, y, color, count = 12, speed = 1) {
-    const centerX = x;
-    const centerY = y;
-    for (let i = 0; i < count; i += 1) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.25;
-      const dist = 0.08 + Math.random() * 0.16;
-      this.particles.push({
-        x: centerX + Math.cos(angle) * dist,
-        y: centerY + Math.sin(angle) * dist,
-        vx: Math.cos(angle) * (0.0008 + Math.random() * 0.0012) * speed,
-        vy: Math.sin(angle) * (0.0008 + Math.random() * 0.0012) * speed,
-        life: 420 + Math.random() * 260,
-        maxLife: 680,
-        color,
-        size: 0.05 + Math.random() * 0.05
-      });
-    }
-  }
-
-  _updateParticles(dtMs) {
-    for (const particle of this.particles) {
-      particle.life -= dtMs;
-      particle.x += particle.vx * dtMs;
-      particle.y += particle.vy * dtMs;
-      particle.vx *= 0.985;
-      particle.vy *= 0.985;
-    }
-
-    this.particles = this.particles.filter((p) => p.life > 0);
   }
 
   _lerpEntity(entity, dtMs) {
@@ -765,8 +720,6 @@ export class GameEngine {
     for (const portal of this.portals) {
       if (portal.activationMs > 0) continue;
       if (portal.x === ex && portal.y === ey) {
-        // Spawn portal particles at entry before relocating portal/entity.
-        this._spawnHealParticles(ex, ey, '#c58dff', 10, 1.15);
         this._teleportPortal(portal);
         entity.x = portal.x;
         entity.y = portal.y;
@@ -775,8 +728,6 @@ export class GameEngine {
         entity.cx = portal.x;
         entity.cy = portal.y;
         entity.teleported = true;
-        // Spawn portal particles again at exit location.
-        this._spawnHealParticles(entity.x, entity.y, '#c58dff', 12, 1.2);
         if (entity.id) this._markCellExplored(entity.x, entity.y);
         this._checkKeyPickup(entity);
 
@@ -858,25 +809,6 @@ export class GameEngine {
     player.cx = nextX;
     player.cy = nextY;
     this._updateKeyOwnerOnDeath(player, keyDropX, keyDropY);
-  }
-
-  _spawnHealParticles(x, y, color, count = 12, speed = 1) {
-    const centerX = x;
-    const centerY = y;
-    for (let i = 0; i < count; i += 1) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.25;
-      const dist = 0.08 + Math.random() * 0.16;
-      this.particles.push({
-        x: centerX + Math.cos(angle) * dist,
-        y: centerY + Math.sin(angle) * dist,
-        vx: Math.cos(angle) * (0.0008 + Math.random() * 0.0012) * speed,
-        vy: Math.sin(angle) * (0.0008 + Math.random() * 0.0012) * speed,
-        life: 420 + Math.random() * 260,
-        maxLife: 680,
-        color,
-        size: 0.05 + Math.random() * 0.05
-      });
-    }
   }
 
   _arrangePlayersAt(x, y) {
@@ -974,6 +906,27 @@ export class GameEngine {
     }
 
     this._checkKeyPickup(entity);
+  }
+
+  _moveRevivedPlayerOneStep(player, fromX, fromY) {
+    const dirs = ['up', 'down', 'left', 'right'];
+    for (let i = dirs.length - 1; i > 0; i -= 1) {
+      const j = randInt(0, i + 1);
+      const tmp = dirs[i];
+      dirs[i] = dirs[j];
+      dirs[j] = tmp;
+    }
+
+    for (const dir of dirs) {
+      if (!this._canMove(player, dir, false)) continue;
+      this._applyMove(player, dir);
+      this._markCellExplored(player.x, player.y);
+      this._arrangePlayersAt(fromX, fromY);
+      this._arrangePlayersAt(player.x, player.y);
+      return;
+    }
+
+    this._arrangePlayersAt(fromX, fromY);
   }
 
   _allPlayersInactive() {
@@ -1163,16 +1116,6 @@ export class GameEngine {
         y: p.y,
         active: p.activationMs <= 0,
         pulse: p.pulse
-      })),
-      particles: this.particles.map((p) => ({
-        x: p.x,
-        y: p.y,
-        vx: p.vx,
-        vy: p.vy,
-        life: p.life,
-        maxLife: p.maxLife,
-        color: p.color,
-        size: p.size
       })),
       traps: this.traps.map((t) => ({
         x: t.x,
