@@ -212,7 +212,8 @@ export class GameEngine {
         diameter: 0.5,
         reviveStartedAt: 0,
         lastMoveAt: 0,
-        trapCooldownAt: 0
+        trapCooldownAt: 0,
+        teleported: false
       });
     }
   }
@@ -234,6 +235,7 @@ export class GameEngine {
           crazy: Math.random() < SERVER_CONFIG.ghost.crazyChance,
           lastMoveAt: 0,
           diameter: 0.5,
+          teleported: false,
           route: [],
           targetX: null,
           targetY: null,
@@ -292,6 +294,13 @@ export class GameEngine {
   update(dtMs, inputQueueBySocket) {
     this.tickMs += dtMs;
 
+    for (const player of this.players) {
+      player.teleported = false;
+    }
+    for (const ghost of this.ghosts) {
+      ghost.teleported = false;
+    }
+
     for (const p of this.portals) {
       if (p.activationMs > 0) p.activationMs -= dtMs;
       p.pulse += dtMs * SERVER_CONFIG.world.portalPulseSpeedPerMs * p.pulseDir;
@@ -336,7 +345,7 @@ export class GameEngine {
       }
 
       if (player.fall) {
-        player.diameter = Math.max(0, player.diameter - dtMs * 0.0008);
+        player.diameter = Math.max(0, player.diameter - dtMs * 0.0012);
         if (player.diameter <= 0.05) {
           player.fall = false;
           player.dead = 1;
@@ -763,6 +772,7 @@ export class GameEngine {
         entity.fy = portal.y;
         entity.cx = portal.x;
         entity.cy = portal.y;
+        entity.teleported = true;
         // Spawn portal particles again at exit location.
         this._spawnHealParticles(entity.x, entity.y, '#c58dff', 12, 1.2);
         if (entity.id) this._markCellExplored(entity.x, entity.y);
@@ -1126,6 +1136,7 @@ export class GameEngine {
         dead: p.dead,
         escaped: p.escaped,
         diameter: p.diameter,
+        teleported: Boolean(p.teleported),
         hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id
       })),
       ghosts: this.ghosts.map((g) => ({
@@ -1137,6 +1148,7 @@ export class GameEngine {
         diameter: g.diameter,
         fall: g.fall,
         crazy: g.crazy,
+        teleported: Boolean(g.teleported),
         hasKey: this.keyOwner?.type === 'ghost' && this.keyOwner.ghostId === g.ghostId
       })),
       portals: this.portals.map((p) => ({

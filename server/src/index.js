@@ -140,6 +140,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       dead: p.dead,
       escaped: p.escaped,
       fall: p.fall,
+      teleported: Boolean(p.teleported),
       diameter: p.diameter,
       hasKey: p.hasKey
     })),
@@ -148,6 +149,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       x: g.x,
       y: g.y,
       fall: g.fall,
+      teleported: Boolean(g.teleported),
       diameter: g.diameter,
       crazy: g.crazy,
       hasKey: g.hasKey

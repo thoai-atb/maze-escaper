@@ -4,6 +4,75 @@ import { MOVEMENT_INTERPOLATION_CONFIG } from '../config';
 
 const PLAYER_SAME_TILE_SPREAD = 0.15;
 
+function spawnBurst(particles, x, y, color, count = 12, speed = 1) {
+  for (let i = 0; i < count; i += 1) {
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.25;
+    const dist = 0.08 + Math.random() * 0.16;
+    particles.push({
+      x: x + Math.cos(angle) * dist,
+      y: y + Math.sin(angle) * dist,
+      vx: Math.cos(angle) * (0.0008 + Math.random() * 0.0012) * speed,
+      vy: Math.sin(angle) * (0.0008 + Math.random() * 0.0012) * speed,
+      life: 420 + Math.random() * 260,
+      maxLife: 680,
+      color,
+      size: 0.05 + Math.random() * 0.05
+    });
+  }
+}
+
+function updateParticles(particles, dtMs) {
+  const dt = Math.max(0, dtMs || 0);
+  for (const particle of particles) {
+    particle.life -= dt;
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    particle.vx *= 0.985;
+    particle.vy *= 0.985;
+  }
+
+  for (let i = particles.length - 1; i >= 0; i -= 1) {
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+}
+
+function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
+  if (!prevSnapshot || !nextSnapshot) return;
+
+  for (const player of nextSnapshot.players || []) {
+    const prevPlayer = prevSnapshot.players?.find((p) => p.id === player.id);
+    if (!prevPlayer) continue;
+
+    const teleportedStarted = Boolean(player.teleported) && !Boolean(prevPlayer.teleported);
+    if (teleportedStarted) {
+      spawnBurst(particles, player.x, player.y, '#c58dff', 12, 1.15);
+    }
+
+    const threwSomewhere = player.dead === 1
+      && (prevPlayer.fall || prevPlayer.dead === 1)
+      && (player.x !== prevPlayer.x || player.y !== prevPlayer.y);
+    if (threwSomewhere) {
+      spawnBurst(particles, player.x, player.y, player.color || '#d8d8d8', 14, 0.9);
+    }
+  }
+
+  for (const ghost of nextSnapshot.ghosts || []) {
+    const prevGhost = prevSnapshot.ghosts?.find((g) => g.id === ghost.id);
+    if (!prevGhost) continue;
+
+    const teleportedStarted = Boolean(ghost.teleported) && !Boolean(prevGhost.teleported);
+    if (teleportedStarted) {
+      spawnBurst(particles, ghost.x, ghost.y, '#c58dff', 12, 1.15);
+    }
+
+    const ghostFellIntoTrap = !prevGhost.fall && ghost.fall;
+    if (ghostFellIntoTrap) {
+      const ghostColor = ghost.crazy ? '#d8d8d8' : '#a5a5a5';
+      spawnBurst(particles, ghost.x, ghost.y, ghostColor, 14, 0.8);
+    }
+  }
+}
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
@@ -254,6 +323,9 @@ export default function GameCanvas({
   const playerLerpRef = useRef(new Map());
   const ghostLerpRef = useRef(new Map());
   const mapVersionRef = useRef(null);
+  const localParticlesRef = useRef([]);
+  const prevDynamicRef = useRef(null);
+  const lastFrameTimeRef = useRef(0);
 
   const getCanvasSize = () => {
     const viewportW = window.innerWidth;
@@ -305,6 +377,9 @@ export default function GameCanvas({
     exploredRef.current = new Set();
     playerLerpRef.current = new Map();
     ghostLerpRef.current = new Map();
+    localParticlesRef.current = [];
+    prevDynamicRef.current = null;
+    lastFrameTimeRef.current = 0;
   }, [mapPayload]);
 
   useEffect(() => {
@@ -323,6 +398,17 @@ export default function GameCanvas({
     const drawFrame = (nowMs) => {
       const latestDynamic = latestSnapshotRef.current;
       const latestMap = latestMapRef.current;
+
+      const prevDynamic = prevDynamicRef.current;
+      if (latestDynamic && latestDynamic !== prevDynamic) {
+        addTransitionParticles(prevDynamic, latestDynamic, localParticlesRef.current);
+        prevDynamicRef.current = latestDynamic;
+      }
+
+      const dtMs = lastFrameTimeRef.current ? nowMs - lastFrameTimeRef.current : 0;
+      lastFrameTimeRef.current = nowMs;
+      updateParticles(localParticlesRef.current, dtMs);
+
       const renderSnapshot = buildRenderSnapshot(
         latestDynamic,
         latestMap,
@@ -332,6 +418,10 @@ export default function GameCanvas({
       );
 
       if (renderSnapshot) {
+        renderSnapshot.particles = [
+          ...(renderSnapshot.particles || []),
+          ...localParticlesRef.current
+        ];
         drawGame(ctx, renderSnapshot, size.width, size.height, {
           radarActive,
           mapActive,

@@ -648,9 +648,13 @@ export default function App() {
         const dx = player.x - prevPlayer.x;
         const dy = player.y - prevPlayer.y;
         const movedTile = dx !== 0 || dy !== 0;
+        const teleportedStarted = Boolean(player.teleported) && !Boolean(prevPlayer.teleported);
+        if (teleportedStarted && !player.dead && !player.escaped) {
+          soundManager.play(SOUND.PORTAL);
+        }
         if (movedTile && !player.dead && !player.escaped) {
-          if (Math.abs(dx) + Math.abs(dy) === 1) soundManager.play(SOUND.STEP);
-          else soundManager.play(SOUND.PORTAL);
+          if (!teleportedStarted && Math.abs(dx) + Math.abs(dy) === 1) soundManager.play(SOUND.STEP);
+          else if (!teleportedStarted && Math.abs(dx) + Math.abs(dy) !== 1) soundManager.play(SOUND.PORTAL);
         }
 
         if (mapPayload && movedTile && !player.dead && !player.escaped) {
@@ -658,6 +662,16 @@ export default function App() {
           const prevCell = mapPayload.cells?.[prevPlayer.y * mapPayload.cols + prevPlayer.x];
           if (cell?.type === 2 && prevCell?.type !== 2) soundManager.play(SOUND.MAP);
           if (cell?.type === 1 && prevCell?.type !== 1) soundManager.play(SOUND.RADAR);
+        }
+      }
+
+      for (const ghost of snapshot.ghosts || []) {
+        const prevGhost = prev.ghosts?.find((g) => g.id === ghost.id);
+        if (!prevGhost) continue;
+
+        const teleportedStarted = Boolean(ghost.teleported) && !Boolean(prevGhost.teleported);
+        if (teleportedStarted) {
+          soundManager.play(SOUND.PORTAL);
         }
       }
 
