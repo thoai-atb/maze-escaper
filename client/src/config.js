@@ -62,3 +62,9 @@ export const SOUND_PLAYBACK_CONFIG = Object.freeze({
     FALL_SCREAM: Object.freeze([0.6, 1.2])
   })
 });
+
+export const MOVEMENT_INTERPOLATION_CONFIG = Object.freeze({
+  // Higher = faster catch-up to target tile, lower = smoother/slower motion.
+  playerLerpFactor: 0.1,
+  ghostLerpFactor: 0.1
+});

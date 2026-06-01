@@ -138,6 +138,7 @@ export default function App() {
   const [hostSocketId, setHostSocketId] = useState('');
   const [started, setStarted] = useState(false);
   const [roundOverlayHeight, setRoundOverlayHeight] = useState(44);
+  const [mapPayload, setMapPayload] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [levelHistory, setLevelHistory] = useState([]);
   const [remainingLives, setRemainingLives] = useState(3);
@@ -177,8 +178,12 @@ export default function App() {
     };
     const onGameStart = () => {
       setStarted(true);
+      setSnapshot(null);
       setShowResults(false);
       setError('');
+    };
+    const onGameMap = (data) => {
+      setMapPayload(data?.map || null);
     };
     const onGameState = (data) => {
       setSnapshot(data.snapshot);
@@ -194,6 +199,7 @@ export default function App() {
       setRoomStatus(null);
       setHostSocketId('');
       setStarted(false);
+      setMapPayload(null);
       setSnapshot(null);
       setLevelHistory([]);
       setRemainingLives(3);
@@ -205,6 +211,7 @@ export default function App() {
     socket.on('welcome', onWelcome);
     socket.on('room:update', onRoomUpdate);
     socket.on('game:start', onGameStart);
+    socket.on('game:map', onGameMap);
     socket.on('game:state', onGameState);
     socket.on('room:list:update', onRoomListUpdate);
     socket.on('room:left', onRoomLeft);
@@ -219,6 +226,7 @@ export default function App() {
       socket.off('welcome', onWelcome);
       socket.off('room:update', onRoomUpdate);
       socket.off('game:start', onGameStart);
+      socket.off('game:map', onGameMap);
       socket.off('game:state', onGameState);
       socket.off('room:list:update', onRoomListUpdate);
       socket.off('room:left', onRoomLeft);
@@ -332,10 +340,10 @@ export default function App() {
   }, [snapshot, mySocketId]);
 
   const myCurrentCell = useMemo(() => {
-    if (!snapshot || !myPlayer) return null;
-    const idx = myPlayer.y * snapshot.cols + myPlayer.x;
-    return snapshot.cells[idx] || null;
-  }, [myPlayer, snapshot]);
+    if (!mapPayload || !myPlayer) return null;
+    const idx = myPlayer.y * mapPayload.cols + myPlayer.x;
+    return mapPayload.cells?.[idx] || null;
+  }, [mapPayload, myPlayer]);
 
   const hasRadarGadget = Boolean(
     myPlayer
@@ -650,6 +658,7 @@ export default function App() {
         <div className="round-canvas-wrap">
           <GameCanvas
             snapshot={snapshot}
+            mapPayload={mapPayload}
             radarActive={Boolean(snapshot?.enableRadar)}
             mapActive={Boolean(snapshot?.enableMapView)}
             fullScreen

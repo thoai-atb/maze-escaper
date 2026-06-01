@@ -40,6 +40,79 @@ const INPUT_QUEUE_MAX = 24;
 const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
 const INITIAL_LIVES = 3;
 
+function getMapPayload(room) {
+  const engine = room.engine;
+  return {
+    version: room.mapVersion,
+    level: engine.level,
+    rows: engine.rows,
+    cols: engine.cols,
+    maxSightDistance: engine.maxSightDistance,
+    exit: {
+      x: engine.exit.x,
+      y: engine.exit.y
+    },
+    cells: engine.cells.map((c) => ({
+      x: c.x,
+      y: c.y,
+      type: c.type,
+      wallT: Boolean(c.wallT?.enable),
+      wallB: Boolean(c.wallB?.enable),
+      wallL: Boolean(c.wallL?.enable),
+      wallR: Boolean(c.wallR?.enable)
+    })),
+    walls: engine.walls.map((w) => ({
+      a: w.a,
+      b: w.b,
+      p1: w.p1,
+      p2: w.p2,
+      enable: w.enable
+    }))
+  };
+}
+
+function buildDynamicSnapshot(room, fullSnapshot) {
+  return {
+    mapVersion: room.mapVersion,
+    level: fullSnapshot.level,
+    rows: fullSnapshot.rows,
+    cols: fullSnapshot.cols,
+    finish: fullSnapshot.finish,
+    cheatEnabled: fullSnapshot.cheatEnabled,
+    minBright: fullSnapshot.minBright,
+    enableRadar: fullSnapshot.enableRadar,
+    enableMapView: fullSnapshot.enableMapView,
+    canRestart: fullSnapshot.canRestart,
+    exit: fullSnapshot.exit,
+    key: fullSnapshot.key,
+    players: fullSnapshot.players.map((p) => ({
+      id: p.id,
+      socketId: p.socketId,
+      name: p.name,
+      color: p.color,
+      x: p.x,
+      y: p.y,
+      dead: p.dead,
+      escaped: p.escaped,
+      fall: p.fall,
+      diameter: p.diameter,
+      hasKey: p.hasKey
+    })),
+    ghosts: fullSnapshot.ghosts.map((g) => ({
+      id: g.id,
+      x: g.x,
+      y: g.y,
+      fall: g.fall,
+      diameter: g.diameter,
+      crazy: g.crazy,
+      hasKey: g.hasKey
+    })),
+    portals: fullSnapshot.portals,
+    traps: fullSnapshot.traps,
+    particles: []
+  };
+}
+
 function getRoundDurationMs(room, now = Date.now()) {
   if (!room.roundStartedAt) return 0;
   const effectiveNow = room.roundFinishedAt || now;
@@ -145,6 +218,7 @@ function createRoom({ hostSocketId, hostName, maxPlayers }) {
     hostSocketId,
     started: false,
     engine,
+    mapVersion: 1,
     levelHistory: [],
     levelAttempts: { 1: 1 },
     roundStartedAt: 0,
@@ -352,6 +426,7 @@ io.on('connection', (socket) => {
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
     room.started = true;
+    room.mapVersion += 1;
     io.to(roomCode).emit('game:start', {
       roomCode,
       status: {
@@ -359,6 +434,10 @@ io.on('connection', (socket) => {
         remainingLives: room.remainingLives,
         resultsOpened: room.resultsOpened
       }
+    });
+    io.to(roomCode).emit('game:map', {
+      roomCode,
+      map: getMapPayload(room)
     });
     emitRoomUpdate(roomCode);
     emitRoomList();
@@ -395,6 +474,7 @@ io.on('connection', (socket) => {
     room.roundStartedAt = Date.now();
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
+    room.mapVersion += 1;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -403,6 +483,10 @@ io.on('connection', (socket) => {
         remainingLives: room.remainingLives,
         resultsOpened: room.resultsOpened
       }
+    });
+    io.to(roomCode).emit('game:map', {
+      roomCode,
+      map: getMapPayload(room)
     });
     emitRoomUpdate(roomCode);
     emitRoomList();
@@ -441,6 +525,7 @@ io.on('connection', (socket) => {
     room.roundStartedAt = Date.now();
     room.roundFinishedAt = 0;
     room.resultsOpened = false;
+    room.mapVersion += 1;
 
     io.to(roomCode).emit('game:start', {
       roomCode,
@@ -449,6 +534,10 @@ io.on('connection', (socket) => {
         remainingLives: room.remainingLives,
         resultsOpened: room.resultsOpened
       }
+    });
+    io.to(roomCode).emit('game:map', {
+      roomCode,
+      map: getMapPayload(room)
     });
     emitRoomUpdate(roomCode);
     emitRoomList();
@@ -576,7 +665,8 @@ setInterval(() => {
     if (!room.started) continue;
 
     room.engine.update(dt, inputQueueBySocket);
-    const snapshot = room.engine.getSnapshot();
+    const fullSnapshot = room.engine.getSnapshot();
+    const snapshot = buildDynamicSnapshot(room, fullSnapshot);
 
     snapshot.players = snapshot.players.map((player) => ({
       ...player,

@@ -907,7 +907,28 @@ export class GameEngine {
     return 100 - t * (100 - this.minBright);
   }
 
-  getSnapshot() {
+  getMapSnapshot() {
+    return {
+      level: this.level,
+      rows: this.rows,
+      cols: this.cols,
+      cells: this.cells.map((c) => ({
+        x: c.x,
+        y: c.y,
+        type: c.type,
+        explored: c.explored
+      })),
+      walls: this.walls.map((w) => ({
+        a: w.a,
+        b: w.b,
+        p1: w.p1,
+        p2: w.p2,
+        enable: w.enable
+      }))
+    };
+  }
+
+  getDynamicSnapshot() {
     const key = this._resolveKeyPosition();
     return {
       level: this.level,
@@ -925,21 +946,6 @@ export class GameEngine {
         locked: this.exitLocked
       },
       key,
-      cells: this.cells.map((c) => ({
-        x: c.x,
-        y: c.y,
-        type: c.type,
-        inSight: c.inSight,
-        bright: c.bright,
-        explored: c.explored
-      })),
-      walls: this.walls.map((w) => ({
-        p1: w.p1,
-        p2: w.p2,
-        enable: w.enable,
-        bright: w.enable ? Math.max(this.cells[w.a].bright, this.cells[w.b].bright) : 0,
-        visible: w.enable && (this.cells[w.a].inSight || this.cells[w.b].inSight)
-      })),
       players: this.players.map((p) => ({
         id: p.id,
         socketId: p.socketId,
@@ -990,6 +996,28 @@ export class GameEngine {
         set: t.set,
         active: t.set && t.timerMs > 0
       }))
+    };
+  }
+
+  getSnapshot() {
+    const dynamic = this.getDynamicSnapshot();
+    const map = this.getMapSnapshot();
+    const cells = map.cells.map((c) => ({
+      ...c,
+      inSight: this._getCell(c.x, c.y).inSight,
+      bright: this._getCell(c.x, c.y).bright
+    }));
+    const walls = this.walls.map((w) => ({
+      p1: w.p1,
+      p2: w.p2,
+      enable: w.enable,
+      bright: w.enable ? Math.max(this.cells[w.a].bright, this.cells[w.b].bright) : 0,
+      visible: w.enable && (this.cells[w.a].inSight || this.cells[w.b].inSight)
+    }));
+    return {
+      ...dynamic,
+      cells,
+      walls
     };
   }
 
