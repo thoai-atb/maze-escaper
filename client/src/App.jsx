@@ -701,6 +701,23 @@ export default function App() {
           if (Array.isArray(event.levelHistory)) setLevelHistory(event.levelHistory);
           if (typeof event.remainingLives === 'number') setRemainingLives(event.remainingLives);
           if (typeof event.resultsOpened === 'boolean') setShowResults(event.resultsOpened);
+          if (Array.isArray(event.exploredCellIndices)) {
+            setMapPayload((prevMap) => {
+              if (!prevMap?.cells || !Array.isArray(prevMap.cells)) return prevMap;
+              const exploredSet = new Set(
+                event.exploredCellIndices
+                  .map((idx) => Number(idx))
+                  .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < prevMap.cells.length)
+              );
+              return {
+                ...prevMap,
+                cells: prevMap.cells.map((cell, idx) => ({
+                  ...cell,
+                  explored: exploredSet.has(idx)
+                }))
+              };
+            });
+          }
         }
       }
 

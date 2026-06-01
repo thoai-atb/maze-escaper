@@ -75,7 +75,7 @@ function drawKey(ctx, x, y, unit, scale = 1) {
   ctx.restore();
 }
 
-function cellColor(bright, type, enabled, explored, level) {
+function cellColor(bright, type, enabled, explored, level, forceVisited = false) {
   const base = Math.max(TILE_COLOR_CONFIG.brightness.min, Math.min(TILE_COLOR_CONFIG.brightness.max, bright));
 
   const toHsl = (palette) => `hsl(${palette.hue} ${palette.saturation}% ${base * palette.lightnessScale}%)`;
@@ -88,7 +88,7 @@ function cellColor(bright, type, enabled, explored, level) {
   }
 
   const levelTheme = getTileThemeByLevel(level);
-  return explored ? toHsl(levelTheme.visited) : toHsl(levelTheme.unvisited);
+  return (explored || forceVisited) ? toHsl(levelTheme.visited) : toHsl(levelTheme.unvisited);
 }
 
 function drawCellGlyph(ctx, cell, x, y, unit, stroke, glyphColor = '#111') {
@@ -471,7 +471,8 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
         cell.type,
         cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView,
         cell.explored,
-        snapshot.level
+        snapshot.level,
+        !snapshot.finish
       )
     );
     const x = cell.x * unit;

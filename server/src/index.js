@@ -466,7 +466,18 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
   }
 
   if (!prevSnapshot.finish && nextSnapshot.finish) {
-    events.push({ type: 'round_finish', canRestart: Boolean(nextSnapshot.canRestart), minBright: nextSnapshot.minBright });
+    const exploredCellIndices = Array.isArray(fullSnapshot?.cells)
+      ? fullSnapshot.cells
+        .map((cell, idx) => (cell?.explored ? idx : -1))
+        .filter((idx) => idx >= 0)
+      : [];
+
+    events.push({
+      type: 'round_finish',
+      canRestart: Boolean(nextSnapshot.canRestart),
+      minBright: nextSnapshot.minBright,
+      exploredCellIndices
+    });
   }
 
   if ((prevSnapshot.exit?.locked ?? null) !== (nextSnapshot.exit?.locked ?? null)) {

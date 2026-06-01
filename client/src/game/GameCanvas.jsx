@@ -109,7 +109,6 @@ function isBlocked(cell, dx, dy) {
 function buildRenderSnapshot(
   dynamicSnapshot,
   mapPayload,
-  exploredSet,
   playerLerpMap,
   ghostLerpMap,
   finishBrightOverride = null,
@@ -128,7 +127,7 @@ function buildRenderSnapshot(
     type: cell.type,
     inSight: false,
     bright: 0,
-    explored: false
+    explored: Boolean(cell.explored)
   }));
 
   const getCell = (x, y) => {
@@ -139,13 +138,6 @@ function buildRenderSnapshot(
   const visiblePlayers = (dynamicSnapshot.players || []).filter(
     (p) => p.socketId && p.dead === 0 && !p.escaped
   );
-
-  for (const p of visiblePlayers) {
-    const px = Math.round(p.x);
-    const py = Math.round(p.y);
-    if (px < 0 || py < 0 || px >= cols || py >= rows) continue;
-    exploredSet.add(py * cols + px);
-  }
 
   if (dynamicSnapshot.finish) {
     const finishBright = clamp(
@@ -191,10 +183,6 @@ function buildRenderSnapshot(
         }
       }
     }
-  }
-
-  for (let i = 0; i < cells.length; i += 1) {
-    cells[i].explored = exploredSet.has(i);
   }
 
   const interpolateEntity = (entity, refMap, keyPrefix, lerpFactor) => {
@@ -346,7 +334,6 @@ export default function GameCanvas({
   const latestSnapshotRef = useRef(null);
   const latestMapRef = useRef(null);
   const frameRef = useRef(0);
-  const exploredRef = useRef(new Set());
   const playerLerpRef = useRef(new Map());
   const ghostLerpRef = useRef(new Map());
   const mapVersionRef = useRef(null);
@@ -403,7 +390,6 @@ export default function GameCanvas({
     const version = mapPayload?.version ?? null;
     if (version === mapVersionRef.current) return;
     mapVersionRef.current = version;
-    exploredRef.current = new Set();
     playerLerpRef.current = new Map();
     ghostLerpRef.current = new Map();
     localParticlesRef.current = [];
@@ -470,7 +456,6 @@ export default function GameCanvas({
       const renderSnapshot = buildRenderSnapshot(
         latestDynamic,
         latestMap,
-        exploredRef.current,
         playerLerpRef.current,
         ghostLerpRef.current,
         finishBright,
