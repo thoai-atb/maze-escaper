@@ -43,12 +43,24 @@ export const LEVEL_TILE_THEMES = Object.freeze({
     visited: { hue: 150, saturation: 84, lightnessScale: 0.5 }
   },
   4: {
-    unvisited: { hue: 270, saturation: 93, lightnessScale: 0.45 },
-    visited: { hue: 270, saturation: 93, lightnessScale: 0.6 }
+    unvisited: { hue: 270, saturation: 93, lightnessScale: 0.3 },
+    visited: { hue: 270, saturation: 93, lightnessScale: 0.5 }
   },
   5: {
     unvisited: { hue: 334, saturation: 82, lightnessScale: 0.36 },
     visited: { hue: 334, saturation: 82, lightnessScale: 0.5 }
+  },
+  6: {
+    unvisited: { hue: 175, saturation: 90, lightnessScale: 0.14 },
+    visited: { hue: 175, saturation: 90, lightnessScale: 0.25 }
+  },
+  7: {
+    unvisited: { hue: 13, saturation: 30, lightnessScale: 0.2 },
+    visited: { hue: 13, saturation: 30, lightnessScale: 0.3 }
+  },
+  8: {
+    unvisited: { hue: 0, saturation: 0, lightnessScale: 0.2 },
+    visited: { hue: 0, saturation: 0, lightnessScale: 0.3 }
   }
 });
 

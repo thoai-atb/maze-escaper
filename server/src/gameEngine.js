@@ -1268,6 +1268,7 @@ export class GameEngine {
 
     return {
       level: this.level,
+      maxLevel: LEVEL_MAX,
       rows: this.rows,
       cols: this.cols,
       maxPlayers: this.maxPlayers,

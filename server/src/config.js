@@ -81,7 +81,7 @@ export const SERVER_CONFIG = {
   },
   level: {
     min: 1, // First level number.
-    max: 5, // Last level number. Increase -> more levels before game ends.
-    rowSteps: [8, 10, 12, 14, 16] // Maze row count per level. Add entries when adding levels; cols = rows * 2.
+    max: 8, // Last level number. Increase -> more levels before game ends.
+    rowSteps: [8, 10, 12, 14, 16, 18, 20, 22] // Maze row count per level. Add entries when adding levels; cols = rows * 2.
   }
 };

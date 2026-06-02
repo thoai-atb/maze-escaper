@@ -1308,8 +1308,11 @@ export default function App() {
   const connectedPlayers = (roomStatus?.players || []).filter((p) => p.connected);
   const roomLevel = roomStatus?.level || 1;
   const displayLevel = snapshot?.level || roomLevel;
+  const historyMaxLevel = levelHistory.length > 0 ? Math.max(...levelHistory.map((entry) => entry.level)) : 1;
+  const configuredMaxLevel = Math.max(1, Number(roomStatus?.maxLevel) || 0, historyMaxLevel, displayLevel);
+  const levelNumbers = Array.from({ length: configuredMaxLevel }, (_, idx) => idx + 1);
   const levelSucceeded = Boolean(snapshot?.players?.some((p) => p.escaped));
-  const allLevelsCleared = levelSucceeded && displayLevel === 5;
+  const allLevelsCleared = levelSucceeded && displayLevel >= configuredMaxLevel;
   const outOfLives = !levelSucceeded && remainingLives <= 0;
   const levelActionLabel = allLevelsCleared || outOfLives ? 'View Results' : levelSucceeded ? 'Next Level' : 'Restart Level';
   const cheatEnabled = Boolean(snapshot?.cheatEnabled);
@@ -1321,8 +1324,8 @@ export default function App() {
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
   const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId);
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
-  const levelFiveResult = levelHistory.find((entry) => entry.level === 5);
-  const completedAllLevels = Boolean(levelFiveResult?.players?.some((p) => p.escaped));
+  const maxLevelResult = levelHistory.find((entry) => entry.level === configuredMaxLevel);
+  const completedAllLevels = Boolean(maxLevelResult?.players?.some((p) => p.escaped));
 
   const triggerLevelAction = () => {
     if (allLevelsCleared || outOfLives) {
@@ -1350,7 +1353,7 @@ export default function App() {
           <div className="round-overlay-main">
             <span className="round-left">
               <span className="round-room">Room {roomCode}</span>
-              <span className="round-level">{displayLevel}/5</span>
+              <span className="round-level">{displayLevel}/{configuredMaxLevel}</span>
               <LivesBadge lives={remainingLives} />
               {cheatEnabled && <span className="round-level round-cheat-badge">Cheat On</span>}
               <span className="round-audio-inline">
@@ -1457,7 +1460,7 @@ export default function App() {
                 {completedAllLevels ? 'All levels finished' : `Highest level reached: ${highestLevelReached}`}
               </h2>
               <div className="results-levels">
-                {[1, 2, 3, 4, 5].map((lvl) => {
+                {levelNumbers.map((lvl) => {
                   const entry = levelHistory.find((h) => h.level === lvl);
                   const borderColor = levelTileColor(lvl, 0.75);
                   const shadowColor = levelTileColor(lvl, 0.18);
@@ -1546,7 +1549,7 @@ export default function App() {
           <div className="forms-grid">
             <article className="card">
               <h2>Create Room</h2>
-              <p>Level starts at 1 and increases to 5 each restart.</p>
+              <p>Level starts at 1 and increases each restart until the final level.</p>
               <div className="field">
                 <label>Player Slots</label>
                 <select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
