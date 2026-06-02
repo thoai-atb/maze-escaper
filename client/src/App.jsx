@@ -900,7 +900,7 @@ export default function App() {
         return;
       }
 
-      if (event.code === 'Space') {
+      if (event.code === 'Enter') {
         if (showResultsRef.current) {
           event.preventDefault();
           leaveRoom();
@@ -908,36 +908,33 @@ export default function App() {
         }
 
         const action = levelActionRef.current;
-        if (!action.enabled) {
-          // Space should continue to behave as trap input during normal gameplay.
-        } else {
-          event.preventDefault();
+        if (!action.enabled) return;
 
-          if (action.mode === 'results') {
-            socket.emit('room:view-results', (res) => {
-              if (!res?.ok) {
-                setError(res?.error || 'Unable to open results.');
-              }
-            });
-            return;
-          }
+        event.preventDefault();
 
-          if (action.mode === 'next') {
-            socket.emit('room:next-level', (res) => {
-              if (!res?.ok) {
-                setError(res?.error || 'Unable to start next level.');
-              }
-            });
-            return;
-          }
-
-          socket.emit('room:restart', (res) => {
+        if (action.mode === 'results') {
+          socket.emit('room:view-results', (res) => {
             if (!res?.ok) {
-              setError(res?.error || 'Unable to restart level.');
+              setError(res?.error || 'Unable to open results.');
             }
           });
           return;
         }
+
+        if (action.mode === 'next') {
+          socket.emit('room:next-level', (res) => {
+            if (!res?.ok) {
+              setError(res?.error || 'Unable to start next level.');
+            }
+          });
+          return;
+        }
+
+        socket.emit('room:restart', (res) => {
+          if (!res?.ok) {
+            setError(res?.error || 'Unable to restart level.');
+          }
+        });
       }
 
       const mapped = keyToInput(event.key);
@@ -1259,7 +1256,7 @@ export default function App() {
   const roomRows = roomStatus?.rows || 0;
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
-  const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId && !p.relocating);
+  const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId);
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
   const levelFiveResult = levelHistory.find((entry) => entry.level === 5);
   const completedAllLevels = Boolean(levelFiveResult?.players?.some((p) => p.escaped));
@@ -1370,6 +1367,9 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                {canTriggerLevelAction && !showResults && (
+                  <p className="round-finish-hint">Press Enter to {levelActionLabel.toLowerCase()}.</p>
+                )}
                 {canTriggerLevelAction && !showResults && (
                   <div className="round-finish-actions">
                     <button

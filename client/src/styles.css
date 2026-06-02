@@ -568,7 +568,7 @@ button.leave-room {
 
 .round-finish-row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 8px;
   background: rgba(15, 15, 15, 0.46);
@@ -610,6 +610,11 @@ button.leave-room {
 .round-finish-outcome.died {
   background: rgba(220, 80, 80, 0.18);
   color: #e07070;
+}
+
+.round-finish-outcome.relocating {
+  background: rgba(130, 185, 255, 0.16);
+  color: #9cc7ff;
 }
 
 .round-finish-hint {
