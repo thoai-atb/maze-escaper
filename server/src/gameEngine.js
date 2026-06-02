@@ -731,7 +731,12 @@ export class GameEngine {
       if ((trap.x === ex && trap.y === ey) && (trap.x === ix && trap.y === iy)) {
         this._consumeTrap(trap);
         if (downedPlayer) {
-          this._relocateDownedPlayer(entity, trap.x, trap.y);
+          entity.x = trap.x;
+          entity.y = trap.y;
+          entity.fx = trap.x;
+          entity.fy = trap.y;
+          entity.pendingRelocate = null;
+          entity.fall = true;
           entity.reviveStartedAt = 0;
           return;
         }
@@ -908,14 +913,12 @@ export class GameEngine {
 
     const nextX = destination ? destination.x : originX;
     const nextY = destination ? destination.y : originY;
-
-    player.x = nextX;
-    player.y = nextY;
-    player.fx = nextX;
-    player.fy = nextY;
-    player.cx = nextX;
-    player.cy = nextY;
     this._updateKeyOwnerOnDeath(player, keyDropX, keyDropY);
+    player.pendingRelocate = {
+      x: nextX,
+      y: nextY,
+      readyAtMs: this.tickMs + SERVER_CONFIG.player.relocateDelayMs
+    };
   }
 
   _arrangePlayersAt(x, y) {

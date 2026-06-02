@@ -575,6 +575,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     const charging = !portal.active;
     const spinRate = charging ? 0.0042 : 0.0021;
     const spin = (animationTimeMs * spinRate + portal.x * 0.17 + portal.y * 0.11) % (Math.PI * 2);
+    const outerSpin = (animationTimeMs * spinRate * 3 + portal.x * 0.17 + portal.y * 0.11) % (Math.PI * 2);
     const bodyScale = charging ? 0 : 1;
     const glowRadius = unit * (charging ? 0.22 : 0.42 + 0.06 * portal.pulse);
 
@@ -603,18 +604,18 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     }
 
     const arcSpecs = [
-      { radius: unit * 0.22, start: 0.00, end: 0.42 },
-      { radius: unit * 0.25, start: 0.78, end: 1.18 },
-      { radius: unit * 0.28, start: 1.55, end: 1.95 },
-      { radius: unit * 0.31, start: 2.36, end: 2.78 },
-      { radius: unit * 0.34, start: 3.14, end: 3.56 }
+      { radius: unit * 0.22, start: 0.00, end: 0.42, s: spin },
+      { radius: unit * 0.25, start: 0.78, end: 1.18, s: spin },
+      { radius: unit * 0.28, start: 1.55, end: 1.95, s: spin },
+      { radius: unit * 0.31, start: 2.36, end: 2.78, s: spin },
+      { radius: unit * 0.32, start: 3.14, end: 3.56, s: outerSpin }
     ];
 
     for (const arc of arcSpecs) {
       ctx.beginPath();
       ctx.lineWidth = charging ? stroke / 4 : (stroke * 3) / 8;
       const arcRadius = charging ? arc.radius * 1.08 : arc.radius;
-      ctx.arc(0, 0, arcRadius, spin + Math.PI * arc.start, spin + Math.PI * arc.end);
+      ctx.arc(0, 0, arcRadius, arc.s + Math.PI * arc.start, arc.s + Math.PI * arc.end);
       ctx.stroke();
     }
     ctx.restore();
