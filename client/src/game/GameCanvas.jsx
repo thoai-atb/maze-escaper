@@ -139,7 +139,7 @@ function buildRenderSnapshot(
   };
 
   const visiblePlayers = (dynamicSnapshot.players || []).filter(
-    (p) => p.socketId && p.dead === 0 && !p.escaped
+    (p) => p.socketId && Number(p.dead) === 0 && !p.escaped
   );
 
   if (dynamicSnapshot.finish) {
@@ -216,7 +216,7 @@ function buildRenderSnapshot(
   const groupedPlayers = new Map();
   for (const player of dynamicSnapshot.players || []) {
     if (!player.socketId || player.escaped) continue;
-    if (!(player.dead === 0 || player.dead === 1)) continue;
+    if (!(Number(player.dead) === 0 || Number(player.dead) === 1)) continue;
     const groupKey = `${player.x},${player.y}`;
     if (!groupedPlayers.has(groupKey)) groupedPlayers.set(groupKey, []);
     groupedPlayers.get(groupKey).push(player);

@@ -766,67 +766,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
   }
 
   if (snapshot.finish) {
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillStyle = 'rgba(4, 4, 4, 0.16)';
     ctx.fillRect(0, 0, width, height);
-    const connectedPlayers = snapshot.players.filter((p) => p.socketId);
-
-    const titleSize = Math.max(34, width * 0.06);
-    const rowHeight = Math.max(26, width * 0.028);
-    const titleY = height * 0.38;
-    const panelWidth = Math.min(width * 0.58, 520);
-    const panelPaddingY = Math.max(10, rowHeight * 0.33);
-    const panelHeight = Math.max(48, connectedPlayers.length * rowHeight + panelPaddingY * 2);
-    const panelX = (width - panelWidth) / 2;
-    const panelY = titleY + Math.max(24, titleSize * 0.55);
-    const paddingX = Math.max(20, panelWidth * 0.06);
-    const listStartY = panelY + panelPaddingY + rowHeight * 0.5;
-    const iconSize = Math.max(18, rowHeight * 0.75);
-
-    // Readable result panel while still revealing maze behind.
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
-    roundedRectPath(ctx, panelX, panelY, panelWidth, panelHeight, Math.max(10, panelHeight * 0.18));
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = Math.max(1, width * 0.0016);
-    roundedRectPath(ctx, panelX, panelY, panelWidth, panelHeight, Math.max(10, panelHeight * 0.18));
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.font = `${titleSize}px Cinzel, serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('Round Over', width / 2, titleY);
-
-    ctx.font = `${Math.max(15, width * 0.017)}px Space Grotesk, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    for (let i = 0; i < connectedPlayers.length; i += 1) {
-      const p = connectedPlayers[i];
-      const y = listStartY + i * rowHeight;
-      const status = p.escaped ? 'survived' : (p.dead ? 'dead' : 'alive');
-      const killsText = `${Number(p.ghostKills) || 0} 👻`;
-      const iconX = panelX + panelWidth - paddingX - iconSize * 0.5;
-
-      ctx.fillStyle = p.color;
-      ctx.fillText(p.name, panelX + paddingX, y);
-
-      ctx.font = `${Math.max(12, width * 0.013)}px Space Grotesk, sans-serif`;
-      ctx.fillStyle = 'rgba(214, 214, 214, 0.92)';
-      ctx.textAlign = 'right';
-      ctx.fillText(killsText, iconX - Math.max(16, iconSize * 0.9), y);
-      ctx.textAlign = 'left';
-      ctx.font = `${Math.max(15, width * 0.017)}px Space Grotesk, sans-serif`;
-
-      drawRoundStatusIcon(ctx, iconX, y, iconSize, status);
-    }
-
-    if (enterHintText) {
-      const hintY = panelY + panelHeight + Math.max(22, rowHeight * 0.9);
-      ctx.font = `${Math.max(13, width * 0.015)}px Space Grotesk, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(255, 238, 208, 0.98)';
-      ctx.fillText(enterHintText, width / 2, hintY);
-    }
   }
 }

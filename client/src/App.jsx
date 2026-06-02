@@ -510,9 +510,11 @@ function KeyCap({ label }) {
 
 function LivesBadge({ lives }) {
   const count = Math.max(0, lives);
+  const fullHeart = '\u2665';
+  const emptyHeart = '\u2661';
   return (
     <span className="round-level round-lives" title={`${count} lives remaining`}>
-      <span className="round-lives-hearts" aria-hidden="true">{'♥'.repeat(count) || '♡'}</span>
+      <span className="round-lives-hearts" aria-hidden="true">{fullHeart.repeat(count) || emptyHeart}</span>
       <span className="round-lives-text">{count}</span>
     </span>
   );
@@ -542,7 +544,7 @@ function ControlsLegend({ showRoundKeys = true }) {
 }
 
 function CopyrightBadge() {
-  return <div className="copyright-badge">© Thoai Ly 2026</div>;
+  return <div className="copyright-badge">{`\u00A9 Thoai Ly 2026`}</div>;
 }
 
 export default function App() {
@@ -596,6 +598,7 @@ export default function App() {
   const pendingMovesRef = useRef([]);
   const trapCloseTimersRef = useRef(new Map());
   const levelActionRef = useRef({ enabled: false, mode: 'restart' });
+  const showResultsRef = useRef(false);
 
   useEffect(() => {
     mySocketIdRef.current = mySocketId;
@@ -826,6 +829,10 @@ export default function App() {
   }, [inputState]);
 
   useEffect(() => {
+    showResultsRef.current = showResults;
+  }, [showResults]);
+
+  useEffect(() => {
     const onResize = () => {
       setViewportSize(getViewportSize());
     };
@@ -892,34 +899,44 @@ export default function App() {
         return;
       }
 
-      if (event.key === 'Enter') {
+      if (event.code === 'Space') {
+        if (showResultsRef.current) {
+          event.preventDefault();
+          leaveRoom();
+          return;
+        }
+
         const action = levelActionRef.current;
-        if (!action.enabled) return;
+        if (!action.enabled) {
+          // Space should continue to behave as trap input during normal gameplay.
+        } else {
+          event.preventDefault();
 
-        if (action.mode === 'results') {
-          socket.emit('room:view-results', (res) => {
-            if (!res?.ok) {
-              setError(res?.error || 'Unable to open results.');
-            }
-          });
-          return;
-        }
-
-        if (action.mode === 'next') {
-          socket.emit('room:next-level', (res) => {
-            if (!res?.ok) {
-              setError(res?.error || 'Unable to start next level.');
-            }
-          });
-          return;
-        }
-
-        socket.emit('room:restart', (res) => {
-          if (!res?.ok) {
-            setError(res?.error || 'Unable to restart level.');
+          if (action.mode === 'results') {
+            socket.emit('room:view-results', (res) => {
+              if (!res?.ok) {
+                setError(res?.error || 'Unable to open results.');
+              }
+            });
+            return;
           }
-        });
-        return;
+
+          if (action.mode === 'next') {
+            socket.emit('room:next-level', (res) => {
+              if (!res?.ok) {
+                setError(res?.error || 'Unable to start next level.');
+              }
+            });
+            return;
+          }
+
+          socket.emit('room:restart', (res) => {
+            if (!res?.ok) {
+              setError(res?.error || 'Unable to restart level.');
+            }
+          });
+          return;
+        }
       }
 
       const mapped = keyToInput(event.key);
@@ -1238,13 +1255,25 @@ export default function App() {
   const showLevelActionButton = Boolean(snapshot?.finish);
   const showResultActionForAll = allLevelsCleared || outOfLives;
   const canTriggerLevelAction = showLevelActionButton && (isHost || showResultActionForAll);
-  const enterHintText = canTriggerLevelAction ? `Press Enter to ${levelActionLabel}` : '';
   const roomRows = roomStatus?.rows || 0;
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
+  const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId);
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
   const levelFiveResult = levelHistory.find((entry) => entry.level === 5);
   const completedAllLevels = Boolean(levelFiveResult?.players?.some((p) => p.escaped));
+
+  const triggerLevelAction = () => {
+    if (allLevelsCleared || outOfLives) {
+      viewResults();
+      return;
+    }
+    if (levelSucceeded) {
+      goToNextLevel();
+      return;
+    }
+    restartLevel();
+  };
 
   useEffect(() => {
     let mode = 'restart';
@@ -1262,24 +1291,6 @@ export default function App() {
               <span className="round-room">Room {roomCode}</span>
               <span className="round-level">{displayLevel}/5</span>
               <LivesBadge lives={remainingLives} />
-              {showLevelActionButton && (isHost || showResultActionForAll) && (
-                <button
-                  className="round-level-action"
-                  onClick={() => {
-                    if (allLevelsCleared || outOfLives) {
-                      viewResults();
-                    } else if (levelSucceeded) {
-                      goToNextLevel();
-                    } else {
-                      restartLevel();
-                    }
-                  }}
-                  disabled={!isHost && !showResultActionForAll}
-                  title={levelActionLabel}
-                >
-                  {levelActionLabel}
-                </button>
-              )}
               {cheatEnabled && <span className="round-level round-cheat-badge">Cheat On</span>}
               <span className="round-audio-inline">
                 <button
@@ -1335,18 +1346,49 @@ export default function App() {
             radarActive={Boolean(snapshot?.enableRadar)}
             hideGhostRadarBlips={hideGhostRadarBlips}
             mapActive={Boolean(snapshot?.enableMapView)}
-            enterHintText={enterHintText}
+            enterHintText=""
             fullScreen
             overlayHeight={roundOverlayHeight}
           />
+
+          {snapshot?.finish && (
+            <div className="round-finish-overlay" role="status" aria-live="polite">
+              <div className="round-finish-card">
+                <h2 className="round-finish-title">Round Over</h2>
+                <div className="round-finish-list">
+                  {roundFinishPlayers.map((p) => (
+                    <div key={p.id} className="round-finish-row">
+                      <span className="dot" style={{ backgroundColor: p.color }} />
+                      <span className="round-finish-name">{p.name}</span>
+                      <span className="round-finish-kills">{`${Number(p.ghostKills) || 0} kills`}</span>
+                      <span className={`round-finish-outcome ${p.escaped ? 'escaped' : 'died'}`}>
+                        {p.escaped ? 'Escaped' : 'Died'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {canTriggerLevelAction && !showResults && (
+                  <div className="round-finish-actions">
+                    <button
+                      className="round-finish-action"
+                      onClick={triggerLevelAction}
+                      title={levelActionLabel}
+                    >
+                      {levelActionLabel}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         {error && <p className="round-error">{error}</p>}
 
-        {showResults && (
+        {showResults && snapshot?.finish && (
           <div className="results-overlay">
             <div className="results-panel">
               <h2 className="results-title">
-                {completedAllLevels ? 'All level finished 🏆' : `Highest level reached: ${highestLevelReached}`}
+                {completedAllLevels ? 'All levels finished' : `Highest level reached: ${highestLevelReached}`}
               </h2>
               <div className="results-levels">
                 {[1, 2, 3, 4, 5].map((lvl) => {
@@ -1388,7 +1430,7 @@ export default function App() {
                               <span className="dot" style={{ backgroundColor: p.color }} />
                               <span className="results-player-name">{p.name}</span>
                               <span className="results-player-meta">
-                                <span className="results-player-kills">{`${Number(p.ghostKills) || 0} 👻`}</span>
+                                <span className="results-player-kills">{`${Number(p.ghostKills) || 0} kills`}</span>
                                 <span className={`results-outcome ${p.escaped ? 'escaped' : 'died'}`}>
                                   {p.escaped ? 'Escaped' : 'Died'}
                                 </span>
@@ -1402,10 +1444,10 @@ export default function App() {
                     </div>
                   );
                 })}
+                <button className="results-lobby-btn results-grid-btn" onClick={leaveRoom}>
+                  Return to Lobby
+                </button>
               </div>
-              <button className="results-lobby-btn" onClick={leaveRoom}>
-                Return to Lobby
-              </button>
             </div>
           </div>
         )}
@@ -1481,7 +1523,7 @@ export default function App() {
                       <div>
                         <div className="room-browser-code">{r.roomCode}</div>
                         <div className="room-browser-meta">
-                          {r.hostName || 'Host'} • Players {r.connectedPlayers}/{r.maxPlayers}
+                          {r.hostName || 'Host'} - Players {r.connectedPlayers}/{r.maxPlayers}
                         </div>
                       </div>
                       <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)} disabled={!hasValidName}>
@@ -1532,7 +1574,7 @@ export default function App() {
 
             <div className="status-card">
               <h3>Controls</h3>
-              <p>Level {roomLevel} • Maze {roomRows}x{roomCols}</p>
+              <p>Level {roomLevel} - Maze {roomRows}x{roomCols}</p>
               <ControlsLegend showRoundKeys={false} />
               <p>Radar: Step on radar tile to show pings.</p>
               <p>Goal: Find key, unlock exit, escape right side.</p>
