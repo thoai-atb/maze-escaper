@@ -1340,16 +1340,18 @@ export default function App() {
         </div>
 
         <div className="round-canvas-wrap">
-          <GameCanvas
-            snapshot={snapshot}
-            mapPayload={mapPayload}
-            radarActive={Boolean(snapshot?.enableRadar)}
-            hideGhostRadarBlips={hideGhostRadarBlips}
-            mapActive={Boolean(snapshot?.enableMapView)}
-            enterHintText=""
-            fullScreen
-            overlayHeight={roundOverlayHeight}
-          />
+          {!showResults && (
+            <GameCanvas
+              snapshot={snapshot}
+              mapPayload={mapPayload}
+              radarActive={Boolean(snapshot?.enableRadar)}
+              hideGhostRadarBlips={hideGhostRadarBlips}
+              mapActive={Boolean(snapshot?.enableMapView)}
+              enterHintText=""
+              fullScreen
+              overlayHeight={roundOverlayHeight}
+            />
+          )}
 
           {snapshot?.finish && (
             <div className="round-finish-overlay" role="status" aria-live="polite">

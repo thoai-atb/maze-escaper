@@ -1150,6 +1150,7 @@ setInterval(() => {
 
   for (const [roomCode, room] of rooms.entries()) {
     if (!room.started) continue;
+    if (room.resultsOpened) continue;
 
     room.engine.update(dt, inputQueueBySocket);
     const fullSnapshot = room.engine.getSnapshot();
