@@ -14,6 +14,8 @@ const initialInput = {
 
 const PLAYER_NAME_STORAGE_KEY = 'maze.player.name';
 const MOVE_PREDICTION_GRACE_MS = 160;
+const MOVE_HOLD_INITIAL_DELAY_MS = 200;
+const MOVE_HOLD_REPEAT_MS = 200;
 
 function getViewportSize() {
   const visual = window.visualViewport;
@@ -46,6 +48,10 @@ function actionToDelta(action) {
   if (action === 'left') return { dx: -1, dy: 0 };
   if (action === 'right') return { dx: 1, dy: 0 };
   return { dx: 0, dy: 0 };
+}
+
+function isMovementAction(action) {
+  return action === 'up' || action === 'down' || action === 'left' || action === 'right';
 }
 
 function hasBlockingWall(cell, action) {
@@ -876,6 +882,95 @@ export default function App() {
   useEffect(() => {
     if (!started) return;
 
+    const moveRepeatStartTimers = new Map();
+    const moveRepeatIntervals = new Map();
+
+    const clearMoveRepeatForAction = (action) => {
+      const startTimer = moveRepeatStartTimers.get(action);
+      if (startTimer) {
+        window.clearTimeout(startTimer);
+        moveRepeatStartTimers.delete(action);
+      }
+
+      const repeatInterval = moveRepeatIntervals.get(action);
+      if (repeatInterval) {
+        window.clearInterval(repeatInterval);
+        moveRepeatIntervals.delete(action);
+      }
+    };
+
+    const clearAllMoveRepeats = () => {
+      for (const timerId of moveRepeatStartTimers.values()) {
+        window.clearTimeout(timerId);
+      }
+      moveRepeatStartTimers.clear();
+
+      for (const intervalId of moveRepeatIntervals.values()) {
+        window.clearInterval(intervalId);
+      }
+      moveRepeatIntervals.clear();
+    };
+
+    const enqueueInputAction = (mapped) => {
+      setSnapshot((prev) => {
+        const meBefore = prev?.players?.find((p) => p.socketId === mySocketIdRef.current) || null;
+        const nextSnapshot = applyClientPrediction(
+          prev,
+          mapPayloadRef.current,
+          mySocketIdRef.current,
+          mapped
+        );
+
+        if (mapped !== 'trap' && meBefore) {
+          const meAfter = nextSnapshot?.players?.find((p) => p.socketId === mySocketIdRef.current) || null;
+          const moved = Boolean(meAfter) && (meAfter.x !== meBefore.x || meAfter.y !== meBefore.y);
+          if (moved) {
+            pendingMovesRef.current.push({
+              fromX: meBefore.x,
+              fromY: meBefore.y,
+              toX: meAfter.x,
+              toY: meAfter.y,
+              createdAt: Date.now()
+            });
+            if (pendingMovesRef.current.length > 8) {
+              pendingMovesRef.current.shift();
+            }
+          }
+        }
+
+        if (mapped === 'trap' && nextSnapshot !== prev) {
+          const me = prev?.players?.find((p) => p.socketId === mySocketIdRef.current);
+          if (me) {
+            predictedTrapsRef.current.add(`${me.x},${me.y}`);
+          }
+        }
+
+        return nextSnapshot;
+      });
+
+      socket.emit('input:enqueue', { action: mapped });
+    };
+
+    const startMoveRepeat = (action) => {
+      if (!isMovementAction(action)) return;
+
+      clearMoveRepeatForAction(action);
+
+      const startTimer = window.setTimeout(() => {
+        if (!inputStateRef.current[action]) return;
+        enqueueInputAction(action);
+
+        const repeatInterval = window.setInterval(() => {
+          if (!inputStateRef.current[action]) return;
+          enqueueInputAction(action);
+        }, MOVE_HOLD_REPEAT_MS);
+
+        moveRepeatIntervals.set(action, repeatInterval);
+      }, MOVE_HOLD_INITIAL_DELAY_MS);
+
+      moveRepeatStartTimers.set(action, startTimer);
+    };
+
     const onDown = (event) => {
       const keyId = event.code || event.key.toLowerCase();
       if (heldKeysRef.current.has(keyId)) return;
@@ -944,43 +1039,8 @@ export default function App() {
       inputStateRef.current = next;
       setInputState(next);
 
-      setSnapshot((prev) => {
-        const meBefore = prev?.players?.find((p) => p.socketId === mySocketIdRef.current) || null;
-        const nextSnapshot = applyClientPrediction(
-          prev,
-          mapPayloadRef.current,
-          mySocketIdRef.current,
-          mapped
-        );
-
-        if (mapped !== 'trap' && meBefore) {
-          const meAfter = nextSnapshot?.players?.find((p) => p.socketId === mySocketIdRef.current) || null;
-          const moved = Boolean(meAfter) && (meAfter.x !== meBefore.x || meAfter.y !== meBefore.y);
-          if (moved) {
-            pendingMovesRef.current.push({
-              fromX: meBefore.x,
-              fromY: meBefore.y,
-              toX: meAfter.x,
-              toY: meAfter.y,
-              createdAt: Date.now()
-            });
-            if (pendingMovesRef.current.length > 8) {
-              pendingMovesRef.current.shift();
-            }
-          }
-        }
-
-        if (mapped === 'trap' && nextSnapshot !== prev) {
-          const me = prev?.players?.find((p) => p.socketId === mySocketIdRef.current);
-          if (me) {
-            predictedTrapsRef.current.add(`${me.x},${me.y}`);
-          }
-        }
-
-        return nextSnapshot;
-      });
-
-      socket.emit('input:enqueue', { action: mapped });
+      enqueueInputAction(mapped);
+      startMoveRepeat(mapped);
     };
 
     const onUp = (event) => {
@@ -993,6 +1053,8 @@ export default function App() {
       const next = { ...inputStateRef.current, [mapped]: false };
       inputStateRef.current = next;
       setInputState(next);
+
+      clearMoveRepeatForAction(mapped);
     };
 
     window.addEventListener('keydown', onDown);
@@ -1001,6 +1063,7 @@ export default function App() {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
       heldKeysRef.current.clear();
+      clearAllMoveRepeats();
     };
   }, [started]);
 
