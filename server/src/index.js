@@ -247,6 +247,19 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
   const nextPlayersById = mapById(nextSnapshot.players || []);
   const prevGhostsById = mapById(prevSnapshot.ghosts || []);
   const nextGhostsById = mapById(nextSnapshot.ghosts || []);
+  const tickMs = Math.max(1, Number(SERVER_CONFIG.net?.tickIntervalMs) || 1);
+  const toTickDuration = (ms) => Math.max(tickMs, Math.ceil(Math.max(0, Number(ms) || 0) / tickMs) * tickMs);
+
+  const FALL_START_DIAMETER = 0.5;
+  const FALL_END_DIAMETER = 0.05;
+  const playerFallRatePerMs = 0.0012;
+  const ghostFallRatePerMs = 0.00065;
+  const fallDurationMsForRate = (ratePerMs) => {
+    const safeRate = Math.max(0.00001, Number(ratePerMs) || 0.00001);
+    return toTickDuration((FALL_START_DIAMETER - FALL_END_DIAMETER) / safeRate);
+  };
+  const playerFallDurationMs = fallDurationMsForRate(playerFallRatePerMs);
+  const ghostFallDurationMs = fallDurationMsForRate(ghostFallRatePerMs);
 
   const ghostCols = fullSnapshot?.cols ?? nextSnapshot.cols;
   const sightRadius = Number(SERVER_CONFIG.vision?.maxSightDistance) || 8;
@@ -298,7 +311,6 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         dead: player.dead,
         escaped: player.escaped,
         fall: player.fall,
-        diameter: player.diameter,
         hasKey: player.hasKey
       });
 
@@ -308,7 +320,13 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
     }
 
     if (!prevPlayer.fall && player.fall) {
-      events.push({ type: 'player_fall', id: player.id, x: player.x, y: player.y });
+      events.push({
+        type: 'player_fall',
+        id: player.id,
+        x: player.x,
+        y: player.y,
+        durationMs: playerFallDurationMs
+      });
     }
 
     if (prevPlayer.dead === 0 && player.dead === 1) {
@@ -318,11 +336,15 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       }
     }
 
+    const playerFallTransition = Boolean(prevPlayer.fall) !== Boolean(player.fall);
+    const playerDiameterChanged = Number(prevPlayer.diameter) !== Number(player.diameter);
+    const shouldEmitPlayerDiameter = playerDiameterChanged && !(Boolean(prevPlayer.fall) && Boolean(player.fall));
+
     const playerStateChanged = (
       prevPlayer.dead !== player.dead
       || prevPlayer.escaped !== player.escaped
-      || Boolean(prevPlayer.fall) !== Boolean(player.fall)
-      || Number(prevPlayer.diameter) !== Number(player.diameter)
+      || playerFallTransition
+      || shouldEmitPlayerDiameter
       || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
     );
 
@@ -333,8 +355,8 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         dead: player.dead,
         escaped: player.escaped,
         fall: player.fall,
-        diameter: player.diameter,
-        hasKey: player.hasKey
+        hasKey: player.hasKey,
+        durationMs: player.fall ? playerFallDurationMs : undefined
       });
     }
 
@@ -363,19 +385,28 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         x: ghost.x,
         y: ghost.y,
         fall: ghost.fall,
-        diameter: ghost.diameter,
         hasKey: ghost.hasKey,
         crazy: ghost.crazy
       });
     }
 
     if (!prevGhost.fall && ghost.fall) {
-      events.push({ type: 'ghost_fall', id: ghost.id, x: ghost.x, y: ghost.y });
+      events.push({
+        type: 'ghost_fall',
+        id: ghost.id,
+        x: ghost.x,
+        y: ghost.y,
+        durationMs: ghostFallDurationMs
+      });
     }
 
+    const ghostFallTransition = Boolean(prevGhost.fall) !== Boolean(ghost.fall);
+    const ghostDiameterChanged = Number(prevGhost.diameter) !== Number(ghost.diameter);
+    const shouldEmitGhostDiameter = ghostDiameterChanged && !(Boolean(prevGhost.fall) && Boolean(ghost.fall));
+
     const ghostStateChanged = (
-      Boolean(prevGhost.fall) !== Boolean(ghost.fall)
-      || Number(prevGhost.diameter) !== Number(ghost.diameter)
+      ghostFallTransition
+      || shouldEmitGhostDiameter
       || Boolean(prevGhost.hasKey) !== Boolean(ghost.hasKey)
     );
 
@@ -384,9 +415,9 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         type: 'ghost_state',
         id: ghost.id,
         fall: ghost.fall,
-        diameter: ghost.diameter,
         hasKey: ghost.hasKey,
-        crazy: ghost.crazy
+        crazy: ghost.crazy,
+        durationMs: ghost.fall ? ghostFallDurationMs : undefined
       });
     }
 
@@ -411,9 +442,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
   const prevTrapsByKey = new Map((prevSnapshot.traps || []).map((trap) => [trapKey(trap), trap]));
   const nextTrapsByKey = new Map((nextSnapshot.traps || []).map((trap) => [trapKey(trap), trap]));
 
-  const tickMs = Math.max(1, Number(SERVER_CONFIG.net?.tickIntervalMs) || 1);
   const trapRatePerMs = Math.max(0.00001, Number(SERVER_CONFIG.trap?.openCloseRatePerMs) || 0.0012);
-  const toTickDuration = (ms) => Math.max(tickMs, Math.ceil(Math.max(0, Number(ms) || 0) / tickMs) * tickMs);
   const openDurationMsFor = (trap) => {
     const outer = Number(trap?.outer) || 0.7;
     const innerStart = Math.max(0, Number(trap?.inner) || 0);

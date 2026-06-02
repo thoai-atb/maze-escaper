@@ -4,6 +4,7 @@ import { MOVEMENT_INTERPOLATION_CONFIG } from '../config';
 
 const PLAYER_SAME_TILE_SPREAD = 0.15;
 const PLAYER_FALL_SHRINK_MS = 375;
+const GHOST_FALL_SHRINK_MS = 695;
 
 function spawnBurst(particles, x, y, color, count = 12, speed = 1) {
   for (let i = 0; i < count; i += 1) {
@@ -113,7 +114,9 @@ function buildRenderSnapshot(
   ghostLerpMap,
   finishBrightOverride = null,
   animationTimeMs = 0,
-  playerFallStartedAtMap = new Map()
+  playerFallStartedAtMap = new Map(),
+  ghostFallStartedAtMap = new Map(),
+  wallClockMs = Date.now()
 ) {
   if (!dynamicSnapshot || !mapPayload) return null;
 
@@ -245,9 +248,15 @@ function buildRenderSnapshot(
       'player',
       MOVEMENT_INTERPOLATION_CONFIG.playerLerpFactor
     );
-    const fallStartedAt = playerFallStartedAtMap.get(p.id);
+    const eventFallStartedAt = Number(p.fallStartedAtMs);
+    const fallbackFallStartedAt = playerFallStartedAtMap.get(p.id);
+    const fallStartedAt = Number.isFinite(eventFallStartedAt) ? eventFallStartedAt : fallbackFallStartedAt;
+    const eventFallDurationMs = Number(p.fallDurationMs);
+    const fallDurationMs = (Number.isFinite(eventFallDurationMs) && eventFallDurationMs > 0)
+      ? eventFallDurationMs
+      : PLAYER_FALL_SHRINK_MS;
     if (p.fall && typeof fallStartedAt === 'number') {
-      const t = clamp((animationTimeMs - fallStartedAt) / PLAYER_FALL_SHRINK_MS, 0, 1);
+      const t = clamp((wallClockMs - fallStartedAt) / fallDurationMs, 0, 1);
       const localDiameter = 0.5 - (0.5 - 0.05) * t;
       p = {
         ...p,
@@ -263,6 +272,23 @@ function buildRenderSnapshot(
   });
 
   const ghosts = (dynamicSnapshot.ghosts || []).map((g) => {
+    const eventFallStartedAt = Number(g.fallStartedAtMs);
+    const fallbackFallStartedAt = ghostFallStartedAtMap.get(g.id);
+    const fallStartedAt = Number.isFinite(eventFallStartedAt) ? eventFallStartedAt : fallbackFallStartedAt;
+    const eventFallDurationMs = Number(g.fallDurationMs);
+    const fallDurationMs = (Number.isFinite(eventFallDurationMs) && eventFallDurationMs > 0)
+      ? eventFallDurationMs
+      : GHOST_FALL_SHRINK_MS;
+
+    if (g.fall && typeof fallStartedAt === 'number') {
+      const t = clamp((wallClockMs - fallStartedAt) / fallDurationMs, 0, 1);
+      const localDiameter = 0.5 - (0.5 - 0.05) * t;
+      g = {
+        ...g,
+        diameter: Math.min(Number(g.diameter) || 0.5, localDiameter)
+      };
+    }
+
     const pos = interpolateEntity(
       g,
       ghostLerpMap,
@@ -342,6 +368,7 @@ export default function GameCanvas({
   const lastFrameTimeRef = useRef(0);
   const finishFadeStartRef = useRef(0);
   const playerFallStartedAtRef = useRef(new Map());
+  const ghostFallStartedAtRef = useRef(new Map());
 
   const getCanvasSize = () => {
     const viewportW = window.innerWidth;
@@ -397,6 +424,7 @@ export default function GameCanvas({
     lastFrameTimeRef.current = 0;
     finishFadeStartRef.current = 0;
     playerFallStartedAtRef.current = new Map();
+    ghostFallStartedAtRef.current = new Map();
   }, [mapPayload]);
 
   useEffect(() => {
@@ -415,6 +443,7 @@ export default function GameCanvas({
     const drawFrame = (nowMs) => {
       const latestDynamic = latestSnapshotRef.current;
       const latestMap = latestMapRef.current;
+      const wallClockMs = Date.now();
 
       const prevDynamic = prevDynamicRef.current;
       if (latestDynamic && latestDynamic !== prevDynamic) {
@@ -425,13 +454,28 @@ export default function GameCanvas({
           if (player.fall) {
             stillFalling.add(player.id);
             if (!playerFallStartedAtRef.current.has(player.id)) {
-              playerFallStartedAtRef.current.set(player.id, nowMs);
+              playerFallStartedAtRef.current.set(player.id, wallClockMs);
             }
           }
         }
         for (const id of Array.from(playerFallStartedAtRef.current.keys())) {
           if (!stillFalling.has(id)) {
             playerFallStartedAtRef.current.delete(id);
+          }
+        }
+
+        const stillGhostFalling = new Set();
+        for (const ghost of latestDynamic.ghosts || []) {
+          if (ghost.fall) {
+            stillGhostFalling.add(ghost.id);
+            if (!ghostFallStartedAtRef.current.has(ghost.id)) {
+              ghostFallStartedAtRef.current.set(ghost.id, wallClockMs);
+            }
+          }
+        }
+        for (const id of Array.from(ghostFallStartedAtRef.current.keys())) {
+          if (!stillGhostFalling.has(id)) {
+            ghostFallStartedAtRef.current.delete(id);
           }
         }
 
@@ -460,7 +504,9 @@ export default function GameCanvas({
         ghostLerpRef.current,
         finishBright,
         nowMs,
-        playerFallStartedAtRef.current
+        playerFallStartedAtRef.current,
+        ghostFallStartedAtRef.current,
+        wallClockMs
       );
 
       if (renderSnapshot) {

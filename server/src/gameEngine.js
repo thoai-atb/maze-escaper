@@ -647,18 +647,6 @@ export class GameEngine {
     this.traps = this.traps.filter((t) => !t.dead);
   }
 
-  _relocateDownedPlayer(player) {
-    const nextX = randInt(0, this.cols);
-    const nextY = randInt(0, this.rows);
-    player.x = nextX;
-    player.y = nextY;
-    player.fx = nextX;
-    player.fy = nextY;
-    player.cx = nextX;
-    player.cy = nextY;
-    this._updateKeyOwnerOnDeath(player);
-  }
-
   _lerpEntity(entity, dtMs) {
     // Mirror the original feel where movement eases toward target over time, not per tick.
     const ratio = 1 - Math.pow(1 - SERVER_CONFIG.motion.lerpBase, dtMs / 1000);
@@ -791,20 +779,78 @@ export class GameEngine {
     }
   }
 
-  _teleportPortal(portal) {
-    let nextX = portal.x;
-    let nextY = portal.y;
-    let safe = 0;
+  _isOpenAdjacentStep(ax, ay, bx, by) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
 
-    while (safe < 200) {
-      safe += 1;
-      nextX = randInt(0, this.cols);
-      nextY = randInt(0, this.rows);
-      if (!this.portals.some((p) => p !== portal && p.x === nextX && p.y === nextY)) break;
+    const cellA = this._getCell(ax, ay);
+    const cellB = this._getCell(bx, by);
+    if (!cellA || !cellB) return false;
+
+    if (dx === 1) return !cellA.wallR?.enable;
+    if (dx === -1) return !cellA.wallL?.enable;
+    if (dy === 1) return !cellA.wallB?.enable;
+    return !cellA.wallT?.enable;
+  }
+
+  _pickRandomDestination({
+    fromX,
+    fromY,
+    maxAttempts = 400,
+    allowPortalOverlap = true,
+    blockedPortal = null
+  }) {
+    let fallback = null;
+
+    const isAllowedCandidate = (x, y) => {
+      if (x === fromX && y === fromY) return false;
+      if (!allowPortalOverlap && this.portals.some((p) => p !== blockedPortal && p.x === x && p.y === y)) return false;
+      return true;
+    };
+
+    for (let i = 0; i < maxAttempts; i += 1) {
+      const x = randInt(0, this.cols);
+      const y = randInt(0, this.rows);
+
+      if (!isAllowedCandidate(x, y)) continue;
+
+      fallback = { x, y };
+      if (!this._isOpenAdjacentStep(fromX, fromY, x, y)) {
+        return { x, y };
+      }
     }
 
-    portal.x = nextX;
-    portal.y = nextY;
+    // Exhaustive pass: first try strict rule (not open-adjacent), then relaxed (still not same cell).
+    for (let y = 0; y < this.rows; y += 1) {
+      for (let x = 0; x < this.cols; x += 1) {
+        if (!isAllowedCandidate(x, y)) continue;
+        if (!this._isOpenAdjacentStep(fromX, fromY, x, y)) return { x, y };
+      }
+    }
+
+    for (let y = 0; y < this.rows; y += 1) {
+      for (let x = 0; x < this.cols; x += 1) {
+        if (!isAllowedCandidate(x, y)) continue;
+        return { x, y };
+      }
+    }
+
+    return fallback;
+  }
+
+  _teleportPortal(portal) {
+    const destination = this._pickRandomDestination({
+      fromX: portal.x,
+      fromY: portal.y,
+      allowPortalOverlap: false,
+      blockedPortal: portal
+    });
+
+    if (destination) {
+      portal.x = destination.x;
+      portal.y = destination.y;
+    }
     portal.activationMs = SERVER_CONFIG.world.portalReloadMs;
   }
 
@@ -824,8 +870,17 @@ export class GameEngine {
   }
 
   _relocateDownedPlayer(player, keyDropX = null, keyDropY = null) {
-    const nextX = randInt(0, this.cols);
-    const nextY = randInt(0, this.rows);
+    const originX = Math.round(player.x);
+    const originY = Math.round(player.y);
+    const destination = this._pickRandomDestination({
+      fromX: originX,
+      fromY: originY,
+      allowPortalOverlap: true
+    });
+
+    const nextX = destination ? destination.x : originX;
+    const nextY = destination ? destination.y : originY;
+
     player.x = nextX;
     player.y = nextY;
     player.fx = nextX;

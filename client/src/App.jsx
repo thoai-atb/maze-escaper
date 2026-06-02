@@ -135,6 +135,11 @@ function applyClientPrediction(prevSnapshot, mapPayload, mySocketId, action) {
 function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
   if (!prevSnapshot || !Array.isArray(events) || events.length === 0) return prevSnapshot;
 
+  const normalizeDurationMs = (value, fallbackMs) => {
+    const n = Math.round(Number(value));
+    return Number.isFinite(n) && n > 0 ? n : fallbackMs;
+  };
+
   const next = {
     ...prevSnapshot,
     players: (prevSnapshot.players || []).map((p) => ({ ...p })),
@@ -171,7 +176,6 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         dead: event.dead ?? next.players[idx].dead,
         escaped: event.escaped ?? next.players[idx].escaped,
         fall: event.fall ?? next.players[idx].fall,
-        diameter: event.diameter ?? next.players[idx].diameter,
         hasKey: event.hasKey ?? next.players[idx].hasKey,
         teleported: false
       };
@@ -181,11 +185,15 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
     if (event.type === 'player_fall') {
       const idx = playerIndexById.get(event.id);
       if (idx == null) continue;
+      const wasFalling = Boolean(next.players[idx].fall);
+      const durationMs = normalizeDurationMs(event.durationMs, 375);
       next.players[idx] = {
         ...next.players[idx],
         x: event.x,
         y: event.y,
         fall: true,
+        fallStartedAtMs: wasFalling ? next.players[idx].fallStartedAtMs : nowMs,
+        fallDurationMs: wasFalling ? next.players[idx].fallDurationMs : durationMs,
         teleported: false
       };
       continue;
@@ -194,15 +202,24 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
     if (event.type === 'player_die' || event.type === 'player_state') {
       const idx = playerIndexById.get(event.id);
       if (idx == null) continue;
+      const current = next.players[idx];
+      const nextFall = event.fall ?? current.fall;
+      const fallStartedAtMs = nextFall
+        ? (current.fall ? current.fallStartedAtMs : nowMs)
+        : undefined;
+      const fallDurationMs = nextFall
+        ? (current.fall ? current.fallDurationMs : normalizeDurationMs(event.durationMs, 375))
+        : undefined;
       next.players[idx] = {
-        ...next.players[idx],
-        x: event.x ?? next.players[idx].x,
-        y: event.y ?? next.players[idx].y,
-        dead: event.dead ?? next.players[idx].dead,
-        escaped: event.escaped ?? next.players[idx].escaped,
-        fall: event.fall ?? next.players[idx].fall,
-        diameter: event.diameter ?? next.players[idx].diameter,
-        hasKey: event.hasKey ?? next.players[idx].hasKey,
+        ...current,
+        x: event.x ?? current.x,
+        y: event.y ?? current.y,
+        dead: event.dead ?? current.dead,
+        escaped: event.escaped ?? current.escaped,
+        fall: nextFall,
+        hasKey: event.hasKey ?? current.hasKey,
+        fallStartedAtMs,
+        fallDurationMs,
         teleported: false
       };
       continue;
@@ -223,7 +240,6 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         x: event.x,
         y: event.y,
         fall: event.fall ?? next.ghosts[idx].fall,
-        diameter: event.diameter ?? next.ghosts[idx].diameter,
         hasKey: event.hasKey ?? next.ghosts[idx].hasKey,
         teleported: false
       };
@@ -233,13 +249,22 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
     if (event.type === 'ghost_fall' || event.type === 'ghost_state') {
       const idx = ghostIndexById.get(event.id);
       if (idx == null) continue;
+      const current = next.ghosts[idx];
+      const nextFall = event.fall ?? current.fall;
+      const fallStartedAtMs = nextFall
+        ? (current.fall ? current.fallStartedAtMs : nowMs)
+        : undefined;
+      const fallDurationMs = nextFall
+        ? (current.fall ? current.fallDurationMs : normalizeDurationMs(event.durationMs, 695))
+        : undefined;
       next.ghosts[idx] = {
-        ...next.ghosts[idx],
-        x: event.x ?? next.ghosts[idx].x,
-        y: event.y ?? next.ghosts[idx].y,
-        fall: event.fall ?? true,
-        diameter: event.diameter ?? next.ghosts[idx].diameter,
-        hasKey: event.hasKey ?? next.ghosts[idx].hasKey
+        ...current,
+        x: event.x ?? current.x,
+        y: event.y ?? current.y,
+        fall: nextFall,
+        hasKey: event.hasKey ?? current.hasKey,
+        fallStartedAtMs,
+        fallDurationMs
       };
       continue;
     }
