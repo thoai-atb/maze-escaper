@@ -390,6 +390,8 @@ export class GameEngine {
               player.reviveStartedAt = 0;
               player.diameter = 0.5;
               this._arrangePlayersAt(player.x, player.y);
+              const q = inputQueueBySocket.get(player.socketId);
+              if (q) q.length = 0;
             }
           } else {
             player.reviveStartedAt = 0;
