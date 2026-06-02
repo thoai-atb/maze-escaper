@@ -213,7 +213,8 @@ export class GameEngine {
         lastMoveAt: 0,
         trapCooldownAt: 0,
         ghostKillsRound: 0,
-        teleported: false
+        teleported: false,
+        pendingRelocate: null
       });
     }
   }
@@ -354,24 +355,45 @@ export class GameEngine {
           player.dead = 1;
           player.diameter = 0.5;
           player.reviveStartedAt = 0;
-          this._relocateDownedPlayer(player, trapX, trapY);
+          // Drop key immediately at trap location, then delay the body teleport.
+          this._updateKeyOwnerOnDeath(player, trapX, trapY);
+          const dest = this._pickRandomDestination({ fromX: trapX, fromY: trapY, allowPortalOverlap: true });
+          player.pendingRelocate = {
+            x: dest ? dest.x : trapX,
+            y: dest ? dest.y : trapY,
+            readyAtMs: this.tickMs + SERVER_CONFIG.player.relocateDelayMs
+          };
         }
       }
 
       if (player.escaped || player.dead === 2) continue;
 
       if (player.dead === 1) {
-        this._checkTrapFor(player);
-        if (this._hasActivePlayerAt(player.x, player.y)) {
-          if (!player.reviveStartedAt) player.reviveStartedAt = this.tickMs;
-          if (this.tickMs - player.reviveStartedAt >= SERVER_CONFIG.player.reviveMs) {
-            player.dead = 0;
+        // Apply deferred relocation once the delay has elapsed.
+        if (player.pendingRelocate && this.tickMs >= player.pendingRelocate.readyAtMs) {
+          const { x, y } = player.pendingRelocate;
+          player.pendingRelocate = null;
+          player.x = x;
+          player.y = y;
+          player.fx = x;
+          player.fy = y;
+          player.cx = x;
+          player.cy = y;
+        }
+        // While pending relocation the body is invisible and untouchable — skip all interactions.
+        if (!player.pendingRelocate) {
+          this._checkTrapFor(player);
+          if (this._hasActivePlayerAt(player.x, player.y)) {
+            if (!player.reviveStartedAt) player.reviveStartedAt = this.tickMs;
+            if (this.tickMs - player.reviveStartedAt >= SERVER_CONFIG.player.reviveMs) {
+              player.dead = 0;
+              player.reviveStartedAt = 0;
+              player.diameter = 0.5;
+              this._arrangePlayersAt(player.x, player.y);
+            }
+          } else {
             player.reviveStartedAt = 0;
-            player.diameter = 0.5;
-            this._arrangePlayersAt(player.x, player.y);
           }
-        } else {
-          player.reviveStartedAt = 0;
         }
         continue;
       }
@@ -460,7 +482,7 @@ export class GameEngine {
       for (const player of this.players) {
         if (player.dead || player.escaped) continue;
         if (this.cheatEnabled) continue;
-        if (Math.round(player.cx) === Math.round(ghost.cx) && Math.round(player.cy) === Math.round(ghost.cy)) {
+        if (player.x === ghost.x && player.y === ghost.y) { // Easier to die, not checking cx, cy
           player.dead = 1;
           player.x = ghost.x;
           player.y = ghost.y;
@@ -699,10 +721,12 @@ export class GameEngine {
 
     const ex = Math.round(entity.cx);
     const ey = Math.round(entity.cy);
+    const ix = Math.round(entity.x);
+    const iy = Math.round(entity.y);
 
     for (const trap of this.traps) {
       if (!trap.set || trap.timerMs <= 0) continue;
-      if (trap.x === ex && trap.y === ey) {
+      if ((trap.x === ex && trap.y === ey) && (trap.x === ix && trap.y === iy)) {
         this._consumeTrap(trap);
         if (downedPlayer) {
           this._relocateDownedPlayer(entity, trap.x, trap.y);
@@ -710,10 +734,10 @@ export class GameEngine {
           return;
         }
 
-        entity.x = ex;
-        entity.y = ey;
-        entity.fx = ex;
-        entity.fy = ey;
+        entity.x = trap.x;
+        entity.y = trap.y;
+        entity.fx = trap.x;
+        entity.fy = trap.y;
         if (entity.ghostId) {
           entity.killedByPlayerId = Number.isFinite(trap.ownerPlayerId) ? trap.ownerPlayerId : null;
         }
@@ -728,10 +752,12 @@ export class GameEngine {
 
     const ex = Math.round(entity.cx);
     const ey = Math.round(entity.cy);
+    const ix = Math.round(entity.x);
+    const iy = Math.round(entity.y);
 
     for (const portal of this.portals) {
       if (portal.activationMs > 0) continue;
-      if (portal.x === ex && portal.y === ey) {
+      if ((portal.x === ex && portal.y === ey) && (portal.x === ix && portal.y === iy)) {
         this._teleportPortal(portal);
         entity.x = portal.x;
         entity.y = portal.y;
@@ -859,14 +885,14 @@ export class GameEngine {
     const hasDropOverride = Number.isFinite(dropX) && Number.isFinite(dropY);
     this.keyOwner = {
       type: 'cell',
-      x: hasDropOverride ? Math.round(dropX) : Math.round(player.cx),
-      y: hasDropOverride ? Math.round(dropY) : Math.round(player.cy)
+      x: hasDropOverride ? Math.round(dropX) : Math.round(player.x),
+      y: hasDropOverride ? Math.round(dropY) : Math.round(player.y)
     };
   }
 
   _updateKeyOwnerOnGhostDeath(ghost) {
     if (!this.keyOwner || this.keyOwner.type !== 'ghost' || this.keyOwner.ghostId !== ghost.ghostId) return;
-    this.keyOwner = { type: 'cell', x: Math.round(ghost.cx), y: Math.round(ghost.cy) };
+    this.keyOwner = { type: 'cell', x: Math.round(ghost.x), y: Math.round(ghost.y) };
   }
 
   _relocateDownedPlayer(player, keyDropX = null, keyDropY = null) {
@@ -1156,7 +1182,8 @@ export class GameEngine {
         ghostKills: Number(p.ghostKillsRound) || 0,
         diameter: p.diameter,
         teleported: Boolean(p.teleported),
-        hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id
+        hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id,
+        pendingRelocate: p.pendingRelocate ?? null
       })),
       ghosts: this.ghosts.map((g) => ({
         id: g.ghostId,
@@ -1217,11 +1244,11 @@ export class GameEngine {
     if (this.keyOwner.type === 'ghost') {
       const ghostOwner = this.ghosts.find((g) => g.ghostId === this.keyOwner.ghostId);
       if (!ghostOwner) return null;
-      return { type: 'ghost', ghostId: ghostOwner.ghostId, x: ghostOwner.cx, y: ghostOwner.cy };
+      return { type: 'ghost', ghostId: ghostOwner.ghostId, x: ghostOwner.x, y: ghostOwner.y };
     }
     const owner = this.players.find((p) => p.id === this.keyOwner.playerId);
     if (!owner) return null;
-    return { type: 'player', playerId: owner.id, x: owner.cx, y: owner.cy };
+    return { type: 'player', playerId: owner.id, x: owner.x, y: owner.y };
   }
 
   getRoomStatus() {

@@ -139,7 +139,7 @@ function buildRenderSnapshot(
   };
 
   const visiblePlayers = (dynamicSnapshot.players || []).filter(
-    (p) => p.socketId && Number(p.dead) === 0 && !p.escaped
+    (p) => p.socketId && Number(p.dead) === 0 && !p.escaped && !p.relocating
   );
 
   if (dynamicSnapshot.finish) {
@@ -216,6 +216,7 @@ function buildRenderSnapshot(
   const groupedPlayers = new Map();
   for (const player of dynamicSnapshot.players || []) {
     if (!player.socketId || player.escaped) continue;
+    if (player.relocating) continue; // invisible while awaiting teleport
     if (!(Number(player.dead) === 0 || Number(player.dead) === 1)) continue;
     const groupKey = `${player.x},${player.y}`;
     if (!groupedPlayers.has(groupKey)) groupedPlayers.set(groupKey, []);
@@ -234,7 +235,7 @@ function buildRenderSnapshot(
     }
   }
 
-  const players = (dynamicSnapshot.players || []).map((p) => {
+  const players = (dynamicSnapshot.players || []).filter((p) => !p.relocating).map((p) => {
     const offset = playerOffsetById.get(p.id) || { dx: 0, dy: 0 };
     const adjusted = {
       ...p,

@@ -180,7 +180,8 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       fall: p.fall,
       teleported: Boolean(p.teleported),
       diameter: p.diameter,
-      hasKey: p.hasKey
+      hasKey: p.hasKey,
+      relocating: Boolean(p.pendingRelocate)
     })),
     ghosts: fullSnapshot.ghosts.map((g) => ({
       id: g.id,
@@ -346,6 +347,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       || playerFallTransition
       || shouldEmitPlayerDiameter
       || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
+      || Boolean(prevPlayer.relocating) !== Boolean(player.relocating)
     );
 
     if (playerStateChanged) {
@@ -356,6 +358,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         escaped: player.escaped,
         fall: player.fall,
         hasKey: player.hasKey,
+        relocating: Boolean(player.relocating),
         durationMs: player.fall ? playerFallDurationMs : undefined
       });
     }

@@ -218,6 +218,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? current.escaped,
         fall: nextFall,
         hasKey: event.hasKey ?? current.hasKey,
+        relocating: event.relocating ?? current.relocating,
         fallStartedAtMs,
         fallDurationMs,
         teleported: false
@@ -1258,7 +1259,7 @@ export default function App() {
   const roomRows = roomStatus?.rows || 0;
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
-  const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId);
+  const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId && !p.relocating);
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
   const levelFiveResult = levelHistory.find((entry) => entry.level === 5);
   const completedAllLevels = Boolean(levelFiveResult?.players?.some((p) => p.escaped));
