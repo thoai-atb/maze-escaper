@@ -1,5 +1,6 @@
 const PLAYER_COLORS = ['#ff00ff', '#00e5ff', '#ffe600', '#00ff66', '#ff7a00', '#8a5cff'];
 import { SERVER_CONFIG } from './config.js';
+import { DEFAULT_MAZE_ALGORITHM, generateMaze, normalizeMazeAlgorithm } from './mazeAlgorithms.js';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -31,11 +32,12 @@ function rowsForLevel(level) {
 }
 
 export class GameEngine {
-  constructor({ level = 1, maxPlayers = 6, cheatEnabled = false }) {
+  constructor({ level = 1, maxPlayers = 6, cheatEnabled = false, mazeAlgorithm = DEFAULT_MAZE_ALGORITHM }) {
     this.level = normalizeLevel(level);
     this.rows = rowsForLevel(this.level);
     this.cols = this.rows * 2;
     this.maxPlayers = clamp(maxPlayers, 1, 6);
+    this.mazeAlgorithm = normalizeMazeAlgorithm(mazeAlgorithm);
 
     this.cells = [];
     this.walls = [];
@@ -70,7 +72,12 @@ export class GameEngine {
     const shouldAdvanceLevel = Boolean(options.advanceLevel);
     const baseLevel = prev.level || LEVEL_MIN;
     const nextLevel = shouldAdvanceLevel ? normalizeLevel(baseLevel + 1) : normalizeLevel(baseLevel);
-    const next = new GameEngine({ level: nextLevel, maxPlayers: prev.maxPlayers, cheatEnabled: prev.cheatEnabled });
+    const next = new GameEngine({
+      level: nextLevel,
+      maxPlayers: prev.maxPlayers,
+      cheatEnabled: prev.cheatEnabled,
+      mazeAlgorithm: prev.mazeAlgorithm
+    });
 
     for (const prevPlayer of prev.players) {
       if (!prevPlayer.socketId) continue;
@@ -152,38 +159,13 @@ export class GameEngine {
   }
 
   _generateMaze() {
-    const start = pickRandom(this.cells);
-    start.visited = true;
-
-    const wallList = [];
-    this._addCellWalls(start, wallList);
-
-    while (wallList.length > 0) {
-      const idx = randInt(0, wallList.length);
-      const wall = wallList[idx];
-      const cellA = this.cells[wall.a];
-      const cellB = this.cells[wall.b];
-      const exactlyOneVisited = (cellA.visited && !cellB.visited) || (!cellA.visited && cellB.visited);
-
-      if (exactlyOneVisited) {
-        wall.enable = false;
-        const newCell = cellA.visited ? cellB : cellA;
-        newCell.visited = true;
-        this._addCellWalls(newCell, wallList);
-      }
-
-      wallList.splice(idx, 1);
-    }
-  }
-
-  _addCellWalls(cell, list) {
-    const maybeAdd = (wall) => {
-      if (wall && wall.enable) list.push(wall);
-    };
-    maybeAdd(cell.wallT);
-    maybeAdd(cell.wallB);
-    maybeAdd(cell.wallL);
-    maybeAdd(cell.wallR);
+    this.mazeAlgorithm = generateMaze({
+      algorithm: this.mazeAlgorithm,
+      cells: this.cells,
+      walls: this.walls,
+      cols: this.cols,
+      getCell: this._getCell.bind(this)
+    });
   }
 
   _spawnPlayers() {
@@ -1158,6 +1140,7 @@ export class GameEngine {
     const key = this._resolveKeyPosition();
     return {
       level: this.level,
+      mazeAlgorithm: this.mazeAlgorithm,
       rows: this.rows,
       cols: this.cols,
       finish: this.finish,
@@ -1268,6 +1251,7 @@ export class GameEngine {
 
     return {
       level: this.level,
+      mazeAlgorithm: this.mazeAlgorithm,
       maxLevel: LEVEL_MAX,
       rows: this.rows,
       cols: this.cols,

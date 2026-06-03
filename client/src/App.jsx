@@ -16,6 +16,17 @@ const PLAYER_NAME_STORAGE_KEY = 'maze.player.name';
 const MOVE_PREDICTION_GRACE_MS = 160;
 const MOVE_HOLD_INITIAL_DELAY_MS = 200;
 const MOVE_HOLD_REPEAT_MS = 200;
+const MAZE_ALGORITHM_OPTIONS = [
+  { value: 'prim', label: 'Randomized Prim' },
+  { value: 'dfs', label: 'Recursive Backtracker (DFS)' },
+  { value: 'backbite', label: 'Backbite' },
+  { value: 'subdivspiral', label: 'Subdivided Spirals' },
+  { value: 'growingtree', label: 'Growing Tree' }
+];
+
+function mazeAlgorithmLabel(value) {
+  return MAZE_ALGORITHM_OPTIONS.find((option) => option.value === value)?.label || 'Randomized Prim';
+}
 
 function getViewportSize() {
   const visual = window.visualViewport;
@@ -565,7 +576,7 @@ export default function App() {
     return saved ? saved.slice(0, 20) : '';
   });
   const [roomCodeInput, setRoomCodeInput] = useState('');
-  const [maxPlayers, setMaxPlayers] = useState(6);
+  const [mazeAlgorithm, setMazeAlgorithm] = useState('prim');
 
   const [roomCode, setRoomCode] = useState('');
   const [roomStatus, setRoomStatus] = useState(null);
@@ -1204,7 +1215,7 @@ export default function App() {
       'room:create',
       {
         name: enteredName,
-        maxPlayers
+        mazeAlgorithm
       },
       (res) => {
         if (!res?.ok) {
@@ -1551,16 +1562,14 @@ export default function App() {
               <h2>Create Room</h2>
               <p>Level starts at 1 and increases each restart until the final level.</p>
               <div className="field">
-                <label>Player Slots</label>
-                <select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                  <option value={3}>3</option>
-                  <option value={4}>4</option>
-                  <option value={5}>5</option>
-                  <option value={6}>6</option>
+                <label>Maze Algorithm</label>
+                <select value={mazeAlgorithm} onChange={(e) => setMazeAlgorithm(e.target.value)}>
+                  {MAZE_ALGORITHM_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
+              <p>Player slots are fixed to 6.</p>
               <button onClick={createRoom} disabled={!hasValidName}>Create</button>
             </article>
 
@@ -1592,7 +1601,7 @@ export default function App() {
                       <div>
                         <div className="room-browser-code">{r.roomCode}</div>
                         <div className="room-browser-meta">
-                          {r.hostName || 'Host'} - Players {r.connectedPlayers}/{r.maxPlayers}
+                          {r.hostName || 'Host'} - Players {r.connectedPlayers}/{r.maxPlayers} - {mazeAlgorithmLabel(r.mazeAlgorithm)}
                         </div>
                       </div>
                       <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)} disabled={!hasValidName}>
@@ -1644,6 +1653,7 @@ export default function App() {
             <div className="status-card">
               <h3>Controls</h3>
               <p>Level {roomLevel} - Maze {roomRows}x{roomCols}</p>
+              <p>Algorithm: {mazeAlgorithmLabel(roomStatus?.mazeAlgorithm)}</p>
               <ControlsLegend showRoundKeys={false} />
               <p>Radar: Step on radar tile to show pings.</p>
               <p>Goal: Find key, unlock exit, escape right side.</p>

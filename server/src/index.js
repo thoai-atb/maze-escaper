@@ -7,6 +7,7 @@ import { Server } from 'socket.io';
 import { customAlphabet } from 'nanoid';
 import { GameEngine } from './gameEngine.js';
 import { SERVER_CONFIG } from './config.js';
+import { normalizeMazeAlgorithm } from './mazeAlgorithms.js';
 
 const app = express();
 app.use(cors());
@@ -39,6 +40,7 @@ const rttBySocket = new Map();
 const INPUT_QUEUE_MAX = 24;
 const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
 const INITIAL_LIVES = 3;
+const FIXED_MAX_PLAYERS = 6;
 
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
@@ -128,6 +130,7 @@ function getMapPayload(room) {
   return {
     version: room.mapVersion,
     level: engine.level,
+    mazeAlgorithm: engine.mazeAlgorithm,
     rows: engine.rows,
     cols: engine.cols,
     maxSightDistance: engine.maxSightDistance,
@@ -158,6 +161,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
   return {
     mapVersion: room.mapVersion,
     level: fullSnapshot.level,
+    mazeAlgorithm: fullSnapshot.mazeAlgorithm,
     rows: fullSnapshot.rows,
     cols: fullSnapshot.cols,
     finish: fullSnapshot.finish,
@@ -617,6 +621,7 @@ function getPublicRoomList() {
       hostSocketId: room.hostSocketId,
       hostName: hostPlayer?.name || 'Host',
       level: room.engine.level,
+      mazeAlgorithm: room.engine.mazeAlgorithm,
       rows: room.engine.rows,
       cols: room.engine.cols,
       maxPlayers: room.engine.maxPlayers,
@@ -695,9 +700,13 @@ function getLevelResults(room) {
   return levelHistory;
 }
 
-function createRoom({ hostSocketId, hostName, maxPlayers }) {
+function createRoom({ hostSocketId, hostName, mazeAlgorithm }) {
   const roomCode = nanoid();
-  const engine = new GameEngine({ level: 1, maxPlayers });
+  const engine = new GameEngine({
+    level: 1,
+    maxPlayers: FIXED_MAX_PLAYERS,
+    mazeAlgorithm: normalizeMazeAlgorithm(mazeAlgorithm)
+  });
   const createdAt = Date.now();
   const room = {
     roomCode,
@@ -841,7 +850,7 @@ io.on('connection', (socket) => {
       const room = createRoom({
         hostSocketId: socket.id,
         hostName: payload?.name || 'Host',
-        maxPlayers: Number(payload?.maxPlayers || 6)
+        mazeAlgorithm: payload?.mazeAlgorithm
       });
 
       if (!room) {
