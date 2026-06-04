@@ -73,7 +73,7 @@ function drawGadgetBurnCell(ctx, cx, cy, unit, baseHsl, cell) {
     const sat = Math.max(0, Math.min(100, baseSat + (burned ? -16 : 0)));
     const light = Math.max(0, Math.min(100, baseLight + burnOffset));
     ctx.fillStyle = hslColor(baseHue, sat, light);
-    ctx.fillRect(x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1));
+    ctx.fillRect(x1, y1, Math.max(1, x2 - x1) + 1, Math.max(1, y2 - y1) + 1);
   }
 }
 

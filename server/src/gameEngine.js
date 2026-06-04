@@ -93,6 +93,7 @@ export class GameEngine {
     this.gadgetWearAccMsByCell = new Map();
     this.mysteryBoxOpenSeq = 0;
     this.lastMysteryBoxOpen = null;
+    this.mysteryBoxRespawnAtMs = null;
     this._buildCells();
     this._buildWalls();
     this._generateMaze();
@@ -297,16 +298,22 @@ export class GameEngine {
       const y = randInt(0, this.rows);
       if (this.keyOwner?.type === 'cell' && this.keyOwner.x === x && this.keyOwner.y === y) continue;
       this.mysteryBoxOwner = { type: 'cell', x, y };
+      this.mysteryBoxRespawnAtMs = null;
       return;
     }
 
     this.mysteryBoxOwner = { type: 'cell', x: 0, y: 0 };
+    this.mysteryBoxRespawnAtMs = null;
   }
 
   consumePendingHeartRewards() {
     const reward = Math.max(0, Number(this.pendingHeartRewards) || 0);
     this.pendingHeartRewards = 0;
     return reward;
+  }
+
+  _mysteryBoxRespawnDelayMs() {
+    return Math.max(0, Math.round(Number(SERVER_CONFIG.mysteryBox?.respawnMs) || 5000));
   }
 
   consumeMapDirty() {
@@ -371,6 +378,7 @@ export class GameEngine {
     this._checkActivePlayerTraps();
     this._updateTraps(dtMs);
     this._arrangeAllPlayers();
+    this._updateMysteryBoxRespawn();
 
     if (this.finish) {
       this.minBright = Math.min(100, this.minBright + (dtMs / 1000) * SERVER_CONFIG.finish.fadePerSecond);
@@ -387,6 +395,14 @@ export class GameEngine {
 
     this._updateGadgetDurability(dtMs);
     this._updateVision();
+  }
+
+  _updateMysteryBoxRespawn() {
+    if (this.mysteryBoxOwner) return;
+    if (!isFiniteNumber(this.mysteryBoxRespawnAtMs)) return;
+    if (this.tickMs < Number(this.mysteryBoxRespawnAtMs)) return;
+
+    this._spawnMysteryBox();
   }
 
   _updatePlayers(dtMs, inputQueueBySocket) {
@@ -877,6 +893,7 @@ export class GameEngine {
       if (entity.id) {
         this._applyMysteryBoxOutcome(entity);
         this.mysteryBoxOwner = null;
+        this.mysteryBoxRespawnAtMs = this.tickMs + this._mysteryBoxRespawnDelayMs();
         return;
       }
 
@@ -904,7 +921,7 @@ export class GameEngine {
       .filter(Boolean);
 
     const playerAlreadyHasKey = this.keyOwner?.type === 'player' && this.keyOwner.playerId === player.id;
-    if (playerAlreadyHasKey) {
+    if (playerAlreadyHasKey || !this.exitLocked) {
       const keyIdx = allOutcomes.indexOf('give_key');
       if (keyIdx >= 0) allOutcomes.splice(keyIdx, 1);
     }

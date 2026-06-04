@@ -27,7 +27,7 @@ export const SERVER_CONFIG = {
     portalPulseSpeedPerMs: 0.0007, // Increase -> faster portal pulse animation. Decrease -> slower pulse animation.
     portalPulseMin: 0.9, // Increase -> raises smallest pulse size. Decrease -> allows smaller pulse size.
     portalPulseMax: 1.1, // Increase -> raises largest pulse size. Decrease -> caps largest pulse lower.
-    gadgetCellChance: 0.02, // Total chance any cell is a gadget tile (radar or blueprint).
+    gadgetCellChance: 0.015, // Total chance any cell is a gadget tile (radar or blueprint).
     gadgetRadarRatio: 0.5,  // Of all gadget tiles, this fraction will be radar; the rest will be blueprint. 0.5 = equal split.
     specialTileDurability: 9, // Max durability per gadget tile.
     specialTileWearMs: 5000 // Occupied time required to consume one durability point.
@@ -83,6 +83,7 @@ export const SERVER_CONFIG = {
     fadePerSecond: 100 // Increase -> faster end-round fade to full visibility. Decrease -> slower fade.
   },
   mysteryBox: {
+    respawnMs: 5000, // Delay before a consumed mystery box respawns on the board.
     outcomes: [
       'spawn_portal',
       'spawn_crazy',

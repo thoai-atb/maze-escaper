@@ -56,6 +56,18 @@ function updateParticles(particles, dtMs) {
 function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
   if (!prevSnapshot || !nextSnapshot) return;
 
+  const nextBoxIsCell = nextSnapshot.mysteryBox?.type === 'cell';
+  const nextBoxX = Math.round(Number(nextSnapshot.mysteryBox?.x) || 0);
+  const nextBoxY = Math.round(Number(nextSnapshot.mysteryBox?.y) || 0);
+  const prevBoxIsSameCell = prevSnapshot.mysteryBox?.type === 'cell'
+    && Math.round(Number(prevSnapshot.mysteryBox.x) || 0) === nextBoxX
+    && Math.round(Number(prevSnapshot.mysteryBox.y) || 0) === nextBoxY;
+
+  if (nextBoxIsCell && !prevBoxIsSameCell) {
+    spawnBurst(particles, nextBoxX, nextBoxY, '#ffd65c', 18, 1.15);
+    spawnBurst(particles, nextBoxX, nextBoxY, '#ff9f43', 10, 0.95);
+  }
+
   if (prevSnapshot.mysteryBox && !nextSnapshot.mysteryBox) {
     const boxX = Number(prevSnapshot.mysteryBox.x);
     const boxY = Number(prevSnapshot.mysteryBox.y);
