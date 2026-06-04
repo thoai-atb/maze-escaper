@@ -278,7 +278,7 @@ function generateBackbite(cells, cols, getCell) {
   braidDeadEnds(cells, cols, getCell, 1);
 }
 
-function spiralPathForRegion(x, y, w, h) {
+function spiralPathForRegion(x, y, w, h, clockwise = true) {
   const path = [];
   let left = x;
   let right = x + w - 1;
@@ -286,17 +286,32 @@ function spiralPathForRegion(x, y, w, h) {
   let bottom = y + h - 1;
 
   while (left <= right && top <= bottom) {
-    for (let cx = left; cx <= right; cx += 1) path.push({ x: cx, y: top });
-    top += 1;
-    for (let cy = top; cy <= bottom; cy += 1) path.push({ x: right, y: cy });
-    right -= 1;
-    if (top <= bottom) {
-      for (let cx = right; cx >= left; cx -= 1) path.push({ x: cx, y: bottom });
-      bottom -= 1;
-    }
-    if (left <= right) {
-      for (let cy = bottom; cy >= top; cy -= 1) path.push({ x: left, y: cy });
+    if (clockwise) {
+      for (let cx = left; cx <= right; cx += 1) path.push({ x: cx, y: top });
+      top += 1;
+      for (let cy = top; cy <= bottom; cy += 1) path.push({ x: right, y: cy });
+      right -= 1;
+      if (top <= bottom) {
+        for (let cx = right; cx >= left; cx -= 1) path.push({ x: cx, y: bottom });
+        bottom -= 1;
+      }
+      if (left <= right) {
+        for (let cy = bottom; cy >= top; cy -= 1) path.push({ x: left, y: cy });
+        left += 1;
+      }
+    } else {
+      for (let cy = top; cy <= bottom; cy += 1) path.push({ x: left, y: cy });
       left += 1;
+      for (let cx = left; cx <= right; cx += 1) path.push({ x: cx, y: bottom });
+      bottom -= 1;
+      if (left <= right) {
+        for (let cy = bottom; cy >= top; cy -= 1) path.push({ x: right, y: cy });
+        right -= 1;
+      }
+      if (top <= bottom) {
+        for (let cx = right; cx >= left; cx -= 1) path.push({ x: cx, y: top });
+        top += 1;
+      }
     }
   }
 
@@ -331,7 +346,8 @@ function generateSubdividedSpirals(cells, cols, getCell) {
   splitRegion(0, 0, cols, rows, regions);
 
   for (const region of regions) {
-    const spiral = spiralPathForRegion(region.x, region.y, region.w, region.h);
+    const clockwise = Math.random() < 0.5;
+    const spiral = spiralPathForRegion(region.x, region.y, region.w, region.h, clockwise);
     carvePathByCoordinates(spiral, getCell, cols);
   }
 

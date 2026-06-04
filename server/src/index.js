@@ -210,7 +210,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       fall: g.fall,
       teleported: Boolean(g.teleported),
       diameter: g.diameter,
-      crazy: g.crazy,
+      type: String(g.type || 'normal'),
       hasKey: g.hasKey,
       hasMysteryBox: g.hasMysteryBox
     })),
@@ -286,7 +286,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
 
   const ghostCols = fullSnapshot?.cols ?? nextSnapshot.cols;
   const sightRadius = Number(SERVER_CONFIG.vision?.maxSightDistance) || 8;
-  const activePlayers = (nextSnapshot.players || []).filter((p) => Number(p.dead) === 0 && Number(p.escaped) === 0);
+  const activePlayers = (nextSnapshot.players || []).filter((p) => p.socketId && Number(p.dead) === 0 && Number(p.escaped) === 0);
   const inSightRadiusOfAnyPlayer = (x, y) => {
     for (const player of activePlayers) {
       const dx = Number(player.x) - Number(x);
@@ -382,6 +382,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
       || Boolean(prevPlayer.hasMysteryBox) !== Boolean(player.hasMysteryBox)
       || Boolean(prevPlayer.relocating) !== Boolean(player.relocating)
+      || prevPlayer.socketId !== player.socketId
     );
 
     if (playerStateChanged) {
@@ -393,6 +394,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         fall: player.fall,
         hasKey: player.hasKey,
         hasMysteryBox: player.hasMysteryBox,
+        socketId: player.socketId,
         relocating: Boolean(player.relocating),
         durationMs: player.fall ? playerFallDurationMs : undefined
       });
@@ -423,16 +425,26 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
             fall: ghost.fall,
             hasKey: ghost.hasKey,
             hasMysteryBox: ghost.hasMysteryBox,
-            crazy: ghost.crazy,
+            ghostType: String(ghost.type || 'normal'),
             diameter: ghost.diameter
           }
         });
       }
       continue;
     }
-    if (!isGhostVisible(ghost, prevGhost)) continue;
 
     const moved = ghost.x !== prevGhost.x || ghost.y !== prevGhost.y;
+    const sneakyCaptureMove = moved
+      && String(ghost.type || 'normal') === 'sneaky'
+      && (nextSnapshot.players || []).some((player) => {
+        const prevPlayer = prevPlayersById.get(player.id);
+        if (!prevPlayer) return false;
+        const diedThisTick = Number(prevPlayer.dead) === 0 && Number(player.dead) === 1;
+        if (!diedThisTick) return false;
+        return Number(player.x) === Number(ghost.x) && Number(player.y) === Number(ghost.y);
+      });
+    if (!isGhostVisible(ghost, prevGhost) && !sneakyCaptureMove) continue;
+
     if (moved) {
       events.push({
         type: 'ghost_move',
@@ -441,7 +453,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         y: ghost.y,
         fall: ghost.fall,
         hasKey: ghost.hasKey,
-        crazy: ghost.crazy
+        ghostType: String(ghost.type || 'normal')
       });
     }
 
@@ -462,6 +474,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
     const ghostStateChanged = (
       ghostFallTransition
       || shouldEmitGhostDiameter
+      || String(prevGhost.type || 'normal') !== String(ghost.type || 'normal')
       || Boolean(prevGhost.hasKey) !== Boolean(ghost.hasKey)
       || Boolean(prevGhost.hasMysteryBox) !== Boolean(ghost.hasMysteryBox)
     );
@@ -473,7 +486,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         fall: ghost.fall,
         hasKey: ghost.hasKey,
         hasMysteryBox: ghost.hasMysteryBox,
-        crazy: ghost.crazy,
+        ghostType: String(ghost.type || 'normal'),
         durationMs: ghost.fall ? ghostFallDurationMs : undefined
       });
     }
@@ -1233,7 +1246,23 @@ io.on('connection', (socket) => {
     const parsed = Number(payload);
     if (!Number.isFinite(parsed)) return;
     const rttMs = Math.max(0, Math.min(5000, Math.round(parsed)));
+    const previousRtt = rttBySocket.get(socket.id);
+    if (previousRtt === rttMs) return;
     rttBySocket.set(socket.id, rttMs);
+
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) return;
+
+    const room = rooms.get(roomCode);
+    if (!room) return;
+
+    const player = room.engine.players.find((entry) => entry.socketId === socket.id);
+    if (!player) return;
+
+    io.to(roomCode).emit('room:rtt', {
+      playerId: player.id,
+      rttMs
+    });
   });
 
   socket.on('disconnect', () => {

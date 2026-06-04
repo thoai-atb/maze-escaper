@@ -243,6 +243,13 @@ export class GameEngine {
     const total = this.rows * this.cols;
     for (let i = 0; i < total; i++) {
       if (Math.random() < SERVER_CONFIG.ghost.spawnChance) {
+        const crazyChance = Math.max(0, Number(SERVER_CONFIG.ghost.crazyChance) || 0);
+        const sneakyChance = Math.max(0, Number(SERVER_CONFIG.ghost.sneakyChance) || crazyChance);
+        const typeRoll = Math.random();
+        const isCrazy = typeRoll < crazyChance;
+        const isSneaky = !isCrazy && typeRoll < (crazyChance + sneakyChance);
+        const ghostType = isCrazy ? 'crazy' : (isSneaky ? 'sneaky' : 'normal');
+
         this.ghosts.push({
           ghostId: this.nextGhostId++,
           x: randInt(Math.floor(this.cols / 4), this.cols),
@@ -253,7 +260,7 @@ export class GameEngine {
           fy: 0,
           dead: false,
           fall: false,
-          crazy: Math.random() < SERVER_CONFIG.ghost.crazyChance,
+          type: ghostType,
           lastMoveAt: 0,
           diameter: 0.5,
           killedByPlayerId: null,
@@ -261,6 +268,11 @@ export class GameEngine {
           route: [],
           targetX: null,
           targetY: null,
+          targetPlayerId: null,
+          sneakySkipNextMove: false,
+          sneakyRoute: [],
+          sneakyTargetX: null,
+          sneakyTargetY: null,
           routeStartedAt: 0,
           restUntilMs: 0
         });
@@ -532,8 +544,10 @@ export class GameEngine {
         continue;
       }
 
-      if (ghost.crazy) {
+      if (ghost.type === 'crazy') {
         this._updateCrazyGhost(ghost);
+      } else if (ghost.type === 'sneaky') {
+        this._updateSneakyGhost(ghost);
       } else {
         const moveDelay = SERVER_CONFIG.ghost.moveMs;
         if (this.tickMs - ghost.lastMoveAt >= moveDelay) {
@@ -572,6 +586,110 @@ export class GameEngine {
     }
 
     this.ghosts = this.ghosts.filter((g) => !g.dead);
+  }
+
+  _findSneakyVisiblePlayer(ghost) {
+    let chosen = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+
+    for (const player of this.players) {
+      if (!player.socketId || player.dead || player.escaped) continue;
+      const dx = Math.abs(player.x - ghost.x);
+      const dy = Math.abs(player.y - ghost.y);
+      if (dx !== 0 && dy !== 0) continue;
+      const dist = dx + dy;
+      if (dist <= 0) continue;
+      if (dist > this.maxSightDistance) continue;
+      if (!this._lineOfSight({ x: ghost.x, y: ghost.y }, { x: player.x, y: player.y })) continue;
+      if (dist < bestDist) {
+        bestDist = dist;
+        chosen = player;
+      }
+    }
+
+    return chosen;
+  }
+
+  _updateSneakyGhost(ghost) {
+    const speedMultiplier = Math.max(1, Number(SERVER_CONFIG.ghost.sneakySpeedMultiplier) || 2);
+    const moveDelay = Math.max(1, Math.floor(SERVER_CONFIG.ghost.moveMs / speedMultiplier));
+    const visible = this._findSneakyVisiblePlayer(ghost);
+    const wasAwake = Boolean(ghost.targetPlayerId);
+    if (!Array.isArray(ghost.sneakyRoute)) ghost.sneakyRoute = [];
+
+    if (!wasAwake) {
+      if (!visible) return;
+      ghost.targetPlayerId = visible.id;
+      ghost.sneakySkipNextMove = true;
+      ghost.sneakyRoute = [];
+      ghost.sneakyTargetX = null;
+      ghost.sneakyTargetY = null;
+      ghost.lastMoveAt = this.tickMs;
+    } else if (visible) {
+      const targetChanged = ghost.targetPlayerId !== visible.id;
+      ghost.targetPlayerId = visible.id;
+      if (targetChanged) {
+        ghost.sneakySkipNextMove = true;
+        ghost.sneakyRoute = [];
+        ghost.sneakyTargetX = null;
+        ghost.sneakyTargetY = null;
+      }
+    }
+
+    if (this.tickMs - ghost.lastMoveAt < moveDelay) {
+      return;
+    }
+
+    const target = this.players.find((p) => p.id === ghost.targetPlayerId && p.socketId && !p.dead && !p.escaped);
+    if (!target) {
+      // Lost target (dead/disconnected/escaped): go back to sleep until LoS wake-up.
+      ghost.targetPlayerId = null;
+      ghost.sneakySkipNextMove = false;
+      ghost.sneakyRoute = [];
+      ghost.sneakyTargetX = null;
+      ghost.sneakyTargetY = null;
+      ghost.lastMoveAt = this.tickMs;
+      return;
+    }
+
+    if (ghost.sneakySkipNextMove) {
+      ghost.sneakySkipNextMove = false;
+      return;
+    }
+
+    if (ghost.sneakyTargetX == null || ghost.sneakyTargetY == null) {
+      ghost.sneakyTargetX = target.x;
+      ghost.sneakyTargetY = target.y;
+    }
+
+    const nextStep = ghost.sneakyRoute[0];
+    if (nextStep) {
+      const adjacent = Math.abs(nextStep.x - ghost.x) + Math.abs(nextStep.y - ghost.y) === 1;
+      if (!adjacent) {
+        ghost.sneakyRoute = [];
+      }
+    }
+
+    if (ghost.sneakyRoute.length === 0) {
+      ghost.sneakyRoute = this._findShortestRoute(ghost.x, ghost.y, target.x, target.y);
+    }
+
+    if (!ghost.sneakyRoute || ghost.sneakyRoute.length === 0) {
+      ghost.lastMoveAt = this.tickMs;
+      return;
+    }
+
+    const step = ghost.sneakyRoute[0];
+    const dir = this._dirFromDelta(step.x - ghost.x, step.y - ghost.y);
+    if (!dir || !this._canMove(ghost, dir, false)) {
+      ghost.sneakyRoute = [];
+      ghost.lastMoveAt = this.tickMs;
+      return;
+    }
+
+    this._applyMove(ghost, dir);
+    ghost.sneakyRoute.shift();
+    ghost.lastMoveAt = this.tickMs;
   }
 
   _updateCrazyGhost(ghost) {
@@ -847,8 +965,10 @@ export class GameEngine {
         this._checkKeyPickup(entity);
         this._checkMysteryBoxPickup(entity);
 
-        if (entity.ghostId && entity.crazy) {
+        if (entity.ghostId && entity.type === 'crazy') {
           this._resetCrazyGhostCycle(entity);
+        } else if (entity.ghostId && entity.type === 'sneaky') {
+          this._resetSneakyGhostChase(entity);
         }
         return;
       }
@@ -859,6 +979,17 @@ export class GameEngine {
     ghost.route = [];
     ghost.targetX = null;
     ghost.targetY = null;
+    ghost.targetPlayerId = null;
+    ghost.routeStartedAt = 0;
+    ghost.restUntilMs = 0;
+    ghost.lastMoveAt = this.tickMs;
+  }
+
+  _resetSneakyGhostChase(ghost) {
+    ghost.route = [];
+    ghost.targetX = null;
+    ghost.targetY = null;
+    ghost.targetPlayerId = null;
     ghost.routeStartedAt = 0;
     ghost.restUntilMs = 0;
     ghost.lastMoveAt = this.tickMs;
@@ -997,7 +1128,7 @@ export class GameEngine {
       fy: y,
       dead: false,
       fall: false,
-      crazy: true,
+      type: 'crazy',
       lastMoveAt: this.tickMs,
       diameter: 0.5,
       killedByPlayerId: null,
@@ -1005,6 +1136,7 @@ export class GameEngine {
       route: [],
       targetX: null,
       targetY: null,
+      targetPlayerId: null,
       routeStartedAt: 0,
       restUntilMs: 0
     });
@@ -1572,7 +1704,7 @@ export class GameEngine {
         cy: g.cy,
         diameter: g.diameter,
         fall: g.fall,
-        crazy: g.crazy,
+        type: String(g.type || 'normal'),
         teleported: Boolean(g.teleported),
         hasKey: this.keyOwner?.type === 'ghost' && this.keyOwner.ghostId === g.ghostId,
         hasMysteryBox: this.mysteryBoxOwner?.type === 'ghost' && this.mysteryBoxOwner.ghostId === g.ghostId

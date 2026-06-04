@@ -355,6 +355,19 @@ function drawRadarOverlay(ctx, snapshot, unit, cols, options = {}) {
   ctx.save();
   const dotRadius = Math.max(2, unit * 0.08);
 
+  if (!hideGhostBlips) {
+    for (const ghost of snapshot.ghosts) {
+      const gx = Math.round(ghost.cx);
+      const gy = Math.round(ghost.cy);
+      const cell = snapshot.cells[gy * cols + gx];
+      if (cell?.inSight) continue;
+      ctx.fillStyle = '#ff4444';
+      ctx.beginPath();
+      ctx.arc((ghost.cx + 0.5) * unit, (ghost.cy + 0.5) * unit, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   for (const player of snapshot.players) {
     if (!player.socketId) continue;
     if (player.escaped) continue;
@@ -368,19 +381,6 @@ function drawRadarOverlay(ctx, snapshot, unit, cols, options = {}) {
     ctx.beginPath();
     ctx.arc((player.cx + 0.5) * unit, (player.cy + 0.5) * unit, dotRadius, 0, Math.PI * 2);
     ctx.fill();
-  }
-
-  if (!hideGhostBlips) {
-    for (const ghost of snapshot.ghosts) {
-      const gx = Math.round(ghost.cx);
-      const gy = Math.round(ghost.cy);
-      const cell = snapshot.cells[gy * cols + gx];
-      if (cell?.inSight) continue;
-      ctx.fillStyle = '#ff4444';
-      ctx.beginPath();
-      ctx.arc((ghost.cx + 0.5) * unit, (ghost.cy + 0.5) * unit, dotRadius, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
   // Show black holes (portals) on radar as small purple rings, not filled dots.
@@ -451,9 +451,14 @@ function drawParticles(ctx, snapshot, unit) {
     const cy = (particle.y + 0.5) * unit;
     if (isHeart) {
       const fontSize = Math.max(12, size * 2.8);
+      const borderFontSize = fontSize * 1.16;
       ctx.save();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(0, 0, 0, 1)';
+      ctx.font = `700 ${borderFontSize}px "Segoe UI Symbol", "Apple Color Emoji", sans-serif`;
+      ctx.fillText('\u2665', cx, cy);
+      ctx.fillStyle = `${particle.color}${alphaHex}`;
       ctx.font = `700 ${fontSize}px "Segoe UI Symbol", "Apple Color Emoji", sans-serif`;
       ctx.fillText('\u2665', cx, cy);
       ctx.restore();
@@ -862,7 +867,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     const isFalling = Boolean(ghost.fall);
     const fallProgress = isFalling ? Math.max(0, Math.min(1, 1 - ghostDiameter / 0.5)) : 0;
     const alpha = isFalling ? Math.max(0.2, Math.min(0.9, ghostDiameter * 1.6)) : 1;
-    ctx.fillStyle = ghost.crazy
+    ctx.fillStyle = ghost.type === 'crazy'
       ? `rgba(255, 255, 255, ${alpha})`
       : `rgba(255, 255, 255, ${alpha})`;
 

@@ -241,6 +241,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         fall: nextFall,
         hasKey: event.hasKey ?? current.hasKey,
         hasMysteryBox: event.hasMysteryBox ?? current.hasMysteryBox,
+        socketId: Object.prototype.hasOwnProperty.call(event, 'socketId') ? event.socketId : current.socketId,
         relocating: event.relocating ?? current.relocating,
         fallStartedAtMs,
         fallDurationMs,
@@ -264,6 +265,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         x: event.x,
         y: event.y,
         fall: event.fall ?? next.ghosts[idx].fall,
+        type: event.ghostType ?? next.ghosts[idx].type,
         hasKey: event.hasKey ?? next.ghosts[idx].hasKey,
         hasMysteryBox: event.hasMysteryBox ?? next.ghosts[idx].hasMysteryBox,
         teleported: false
@@ -285,7 +287,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         cy: Number(incoming?.y) || 0,
         diameter: Number(incoming?.diameter) || 0.5,
         fall: Boolean(incoming?.fall),
-        crazy: Boolean(incoming?.crazy),
+        type: String(incoming?.ghostType || incoming?.type || 'normal'),
         teleported: false,
         hasKey: Boolean(incoming?.hasKey),
         hasMysteryBox: Boolean(incoming?.hasMysteryBox)
@@ -315,6 +317,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         x: event.x ?? current.x,
         y: event.y ?? current.y,
         fall: nextFall,
+        type: event.ghostType ?? current.type,
         hasKey: event.hasKey ?? current.hasKey,
         hasMysteryBox: event.hasMysteryBox ?? current.hasMysteryBox,
         fallStartedAtMs,
@@ -738,6 +741,32 @@ export default function App() {
       setStarted(Boolean(data.started));
       setError('');
     };
+    const onRoomRtt = (data) => {
+      const playerId = Number(data?.playerId);
+      const rttMs = Number(data?.rttMs);
+      if (!Number.isFinite(playerId) || !Number.isFinite(rttMs)) return;
+
+      setRoomStatus((prev) => {
+        if (!prev?.players || !Array.isArray(prev.players)) return prev;
+
+        let changed = false;
+        const nextPlayers = prev.players.map((player) => {
+          if (player.id !== playerId) return player;
+          if (player.rttMs === rttMs) return player;
+          changed = true;
+          return {
+            ...player,
+            rttMs
+          };
+        });
+
+        if (!changed) return prev;
+        return {
+          ...prev,
+          players: nextPlayers
+        };
+      });
+    };
     const onGameStart = () => {
       setStarted(true);
       setSnapshot(null);
@@ -962,6 +991,7 @@ export default function App() {
 
     socket.on('welcome', onWelcome);
     socket.on('room:update', onRoomUpdate);
+    socket.on('room:rtt', onRoomRtt);
     socket.on('game:start', onGameStart);
     socket.on('game:map', onGameMap);
     socket.on('game:init', onGameInit);
@@ -980,6 +1010,7 @@ export default function App() {
       clearTrapCloseTimers();
       socket.off('welcome', onWelcome);
       socket.off('room:update', onRoomUpdate);
+      socket.off('room:rtt', onRoomRtt);
       socket.off('game:start', onGameStart);
       socket.off('game:map', onGameMap);
       socket.off('game:init', onGameInit);
@@ -1714,9 +1745,9 @@ export default function App() {
           <div className="forms-grid">
             <article className="card">
               <h2>Create Room</h2>
-              <p>Level starts at 1 and increases each restart until the final level.</p>
-              <p>Maze generation is randomized by the server.</p>
-              <p>Player slots are fixed to 6.</p>
+              <p>Level starts from 1 and increases if at least one player escapes.</p>
+              <p>Maze generation algorithm is randomized by the server.</p>
+              <p>6 players maximum.</p>
               <button onClick={createRoom} disabled={!hasValidName}>Create</button>
             </article>
 

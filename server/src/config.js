@@ -18,8 +18,10 @@ export const SERVER_CONFIG = {
   ghost: {
     moveMs: 700, // Increase -> normal ghosts move less often (easier). Decrease -> move more often (harder).
     crazySpeedMultiplier: 3, // Crazy ghosts step 3x as often as normal while following paths.
+    sneakySpeedMultiplier: 2, // Sneaky ghosts move 2x as often after they are alerted.
     spawnChance: 0.03, // Increase -> more ghosts on average. Decrease -> fewer ghosts.
-    crazyChance: 0.15 // Increase -> more spawned ghosts are crazy. Decrease -> fewer crazy ghosts.
+    crazyChance: 0.15, // Increase -> more spawned ghosts are crazy. Decrease -> fewer crazy ghosts.
+    sneakyChance: 0.15 // Increase -> more spawned ghosts are sneaky. Decrease -> fewer sneaky ghosts.
   },
   world: {
     portalSpawnChance: 0.005, // Increase -> more portals generated. Decrease -> fewer portals.

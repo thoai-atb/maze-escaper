@@ -125,7 +125,7 @@ function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
 
     const ghostFellIntoTrap = !prevGhost.fall && ghost.fall;
     if (ghostFellIntoTrap) {
-      const ghostColor = ghost.crazy ? '#d8d8d8' : '#a5a5a5';
+      const ghostColor = ghost.type === 'crazy' ? '#d8d8d8' : '#a5a5a5';
       spawnBurst(particles, ghost.x, ghost.y, ghostColor, 14, 0.8);
     }
   }
@@ -133,7 +133,7 @@ function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
   for (const prevGhost of prevSnapshot.ghosts || []) {
     const stillExists = (nextSnapshot.ghosts || []).some((ghost) => ghost.id === prevGhost.id);
     if (!stillExists && prevGhost.fall) {
-      const ghostColor = prevGhost.crazy ? '#d8d8d8' : '#a5a5a5';
+      const ghostColor = prevGhost.type === 'crazy' ? '#d8d8d8' : '#a5a5a5';
       spawnBurst(particles, prevGhost.x, prevGhost.y, ghostColor, 12, 0.75);
     }
   }
