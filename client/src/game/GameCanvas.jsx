@@ -165,6 +165,12 @@ function buildRenderSnapshot(
     x: cell.x,
     y: cell.y,
     type: cell.type,
+    gadgetDurability: (cell.gadgetDurability != null && Number.isFinite(Number(cell.gadgetDurability)))
+      ? Math.max(0, Math.round(Number(cell.gadgetDurability)))
+      : null,
+    gadgetMaxDurability: (cell.gadgetMaxDurability != null && Number.isFinite(Number(cell.gadgetMaxDurability)))
+      ? Math.max(1, Math.round(Number(cell.gadgetMaxDurability)))
+      : null,
     inSight: false,
     bright: 0,
     explored: Boolean(cell.explored)

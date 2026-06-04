@@ -14,6 +14,10 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function isFiniteNumber(value) {
+  return value != null && Number.isFinite(Number(value));
+}
+
 function pickWeightedMazeAlgorithm() {
   const biasedEntries = Array.isArray(SERVER_CONFIG.mazeAlgorithm?.weightedBias)
     ? SERVER_CONFIG.mazeAlgorithm.weightedBias
@@ -84,6 +88,9 @@ export class GameEngine {
     this.tickMs = 0;
     this.pendingHeartRewards = 0;
     this.mapDirty = false;
+    this.pendingGadgetTileUpdates = [];
+    this.gadgetOccupancyByCell = new Map();
+    this.gadgetWearAccMsByCell = new Map();
     this.mysteryBoxOpenSeq = 0;
     this.lastMysteryBoxOpen = null;
     this._buildCells();
@@ -125,13 +132,15 @@ export class GameEngine {
       for (let x = 0; x < this.cols; x++) {
         let type = 0;
         const r = Math.random();
-        if (r < SERVER_CONFIG.world.radarCellChance) type = 1;
-        else if (r < SERVER_CONFIG.world.bluePrintCellChance) type = 2;
+        if (r < SERVER_CONFIG.world.gadgetCellChance) {
+          type = Math.random() < SERVER_CONFIG.world.gadgetRadarRatio ? 1 : 2;
+        }
 
         this.cells.push({
           x,
           y,
           type,
+          gadgetDurability: (type === 1 || type === 2) ? this._specialTileDurabilityMax() : null,
           inSight: false,
           bright: 0,
           explored: false,
@@ -306,6 +315,12 @@ export class GameEngine {
     return dirty;
   }
 
+  consumeGadgetTileUpdates() {
+    const updates = this.pendingGadgetTileUpdates.slice();
+    this.pendingGadgetTileUpdates.length = 0;
+    return updates;
+  }
+
   attachPlayer(socketId, name) {
     const slot = this.players.find((p) => !p.socketId);
     if (!slot) return null;
@@ -370,6 +385,7 @@ export class GameEngine {
       this.finish = true;
     }
 
+    this._updateGadgetDurability(dtMs);
     this._updateVision();
   }
 
@@ -982,6 +998,10 @@ export class GameEngine {
     if (!cell) return;
     if (cell.type !== 0) return;
     cell.type = tileType;
+    cell.gadgetDurability = this._specialTileDurabilityMax();
+    const k = keyOf(cell.x, cell.y, this.cols);
+    this.gadgetOccupancyByCell.delete(k);
+    this.gadgetWearAccMsByCell.delete(k);
     this.mapDirty = true;
   }
 
@@ -1325,8 +1345,8 @@ export class GameEngine {
       const current = this._getCell(player.x, player.y);
       if (!current) continue;
 
-      if (current.type === 1) this.enableRadar = true;
-      if (current.type === 2) this.enableMapView = true;
+      if (!this.cheatEnabled && current.type === 1 && this._isGadgetTileActive(current)) this.enableRadar = true;
+      if (!this.cheatEnabled && current.type === 2 && this._isGadgetTileActive(current)) this.enableMapView = true;
 
       current.inSight = true;
       current.bright = Math.max(current.bright, this._brightFromPlayer(current, player));
@@ -1368,7 +1388,99 @@ export class GameEngine {
     return 100 - t * (100 - this.minBright);
   }
 
+  _specialTileDurationMs() {
+    return Math.max(1, Math.round(Number(SERVER_CONFIG.world?.specialTileWearMs) || 5000));
+  }
+
+  _specialTileDurabilityMax() {
+    return Math.max(1, Math.round(Number(SERVER_CONFIG.world?.specialTileDurability) || 9));
+  }
+
+  _emitGadgetTileUpdate(cell) {
+    this.pendingGadgetTileUpdates.push({
+      x: cell.x,
+      y: cell.y,
+      type: cell.type,
+      durability: Math.max(0, Math.round(Number(cell.gadgetDurability) || 0)),
+      maxDurability: this._specialTileDurabilityMax()
+    });
+  }
+
+  _updateGadgetDurability(dtMs) {
+    const wearMs = this._specialTileDurationMs();
+    const nextOccupancy = new Map();
+    const occupied = new Set();
+
+    for (const player of this.players) {
+      if (!player.socketId || player.dead || player.escaped) continue;
+      const cell = this._getCell(player.x, player.y);
+      if (!cell || (cell.type !== 1 && cell.type !== 2)) continue;
+      if (!Number.isFinite(Number(cell.gadgetDurability)) || Number(cell.gadgetDurability) <= 0) continue;
+      const k = keyOf(cell.x, cell.y, this.cols);
+      occupied.add(k);
+      nextOccupancy.set(k, true);
+    }
+
+    for (const cell of this.cells) {
+      if (cell.type !== 1 && cell.type !== 2) continue;
+      const k = keyOf(cell.x, cell.y, this.cols);
+      const wasOccupied = this.gadgetOccupancyByCell.get(k) === true;
+      const isOccupied = occupied.has(k);
+      const prevDurability = Math.max(0, Math.round(Number(cell.gadgetDurability) || 0));
+      let durability = prevDurability;
+
+      if (isOccupied && durability > 0) {
+        const accMs = (this.gadgetWearAccMsByCell.get(k) || 0) + dtMs;
+        const spent = Math.floor(accMs / wearMs);
+        if (spent > 0) {
+          durability = Math.max(0, durability - spent);
+          const remainMs = (durability > 0) ? (accMs - (spent * wearMs)) : 0;
+          this.gadgetWearAccMsByCell.set(k, remainMs);
+        } else {
+          this.gadgetWearAccMsByCell.set(k, accMs);
+        }
+      } else {
+        this.gadgetWearAccMsByCell.set(k, 0);
+      }
+
+      if (!isOccupied && wasOccupied && durability > 0) {
+        durability = Math.max(0, durability - 1);
+      }
+
+      if (durability !== prevDurability) {
+        cell.gadgetDurability = durability;
+        this._emitGadgetTileUpdate(cell);
+      }
+    }
+
+    this.gadgetOccupancyByCell = nextOccupancy;
+  }
+
+  _isGadgetTileActive(cell) {
+    if (!cell || (cell.type !== 1 && cell.type !== 2)) return false;
+    return Math.max(0, Math.round(Number(cell.gadgetDurability) || 0)) > 0;
+  }
+
+  _buildGadgetTilesState() {
+    const maxDurability = this._specialTileDurabilityMax();
+    const tiles = [];
+    for (const cell of this.cells) {
+      if (cell.type !== 1 && cell.type !== 2) continue;
+      const durability = Math.max(0, Math.round(Number(cell.gadgetDurability) || 0));
+      tiles.push({
+        x: cell.x,
+        y: cell.y,
+        type: cell.type,
+        durability,
+        maxDurability,
+        active: durability > 0
+      });
+    }
+    return tiles;
+  }
+
   getMapSnapshot() {
+    const maxDurability = this._specialTileDurabilityMax();
     return {
       level: this.level,
       rows: this.rows,
@@ -1377,6 +1489,10 @@ export class GameEngine {
         x: c.x,
         y: c.y,
         type: c.type,
+        gadgetDurability: (c.type === 1 || c.type === 2)
+          ? Math.max(0, Math.round(Number(c.gadgetDurability) || 0))
+          : null,
+        gadgetMaxDurability: (c.type === 1 || c.type === 2) ? maxDurability : null,
         explored: c.explored
       })),
       walls: this.walls.map((w) => ({
@@ -1402,6 +1518,7 @@ export class GameEngine {
       minBright: this.minBright,
       enableRadar: this.enableRadar,
       enableMapView: this.enableMapView,
+      gadgetTiles: this._buildGadgetTilesState(),
       canRestart: this.finish,
       exit: {
         x: this.exit.x,

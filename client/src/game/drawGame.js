@@ -25,6 +25,8 @@ function wallColor(tone, forceBlack = false) {
   return `hsl(0 0% ${tone}%)`;
 }
 
+// 3x3 burn grid — parts 0-8 burn left-to-right, top-to-bottom (rank === part index)
+
 function fillCellRect(ctx, cx, cy, unit, color) {
   // Snap to physical pixels and add a tiny bleed to hide fractional seam artifacts.
   const x1 = Math.floor(cx * unit);
@@ -39,6 +41,40 @@ function fillCellRect(ctx, cx, cy, unit, color) {
     Math.max(1, x2 - x1) + bleed * 2,
     Math.max(1, y2 - y1) + bleed * 2
   );
+}
+
+function hslColor(h, s, l) {
+  return `hsl(${Math.round(h)} ${Math.round(s)}% ${Math.round(l)}%)`;
+}
+
+function burnCountFromDurability(cell) {
+  const maxDurability = Math.max(1, Number(cell?.gadgetMaxDurability) || 9);
+  const durability = Math.max(0, Math.min(maxDurability, Number(cell?.gadgetDurability) || 0));
+  return Math.max(0, Math.min(9, Math.round(maxDurability - durability)));
+}
+
+function drawGadgetBurnCell(ctx, cx, cy, unit, baseHsl, cell) {
+  const burnedCount = burnCountFromDurability(cell);
+  const baseHue = Number(baseHsl.h);
+  const baseSat = Number(baseHsl.s);
+  const baseLight = Number(baseHsl.l);
+
+  for (let part = 0; part < 9; part += 1) {
+    const row = Math.floor(part / 3);
+    const col = part % 3;
+    const x1 = Math.floor((cx + col / 3) * unit);
+    const y1 = Math.floor((cy + row / 3) * unit);
+    const x2 = Math.ceil((cx + (col + 1) / 3) * unit);
+    const y2 = Math.ceil((cy + (row + 1) / 3) * unit);
+
+    const burned = part < burnedCount;
+    const burnOffset = burned ? -18 : 2.4;
+
+    const sat = Math.max(0, Math.min(100, baseSat + (burned ? -16 : 0)));
+    const light = Math.max(0, Math.min(100, baseLight + burnOffset));
+    ctx.fillStyle = hslColor(baseHue, sat, light);
+    ctx.fillRect(x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1));
+  }
 }
 
 function strokeLine(ctx, x1, y1, x2, y2, color, width) {
@@ -100,10 +136,22 @@ function drawMysteryBox(ctx, x, y, unit, scale = 1) {
 }
 
 function cellColor(bright, type, enabled, explored, level, forceVisited = false) {
+  const { h, s, l } = cellColorHsl(bright, type, enabled, explored, level, forceVisited);
+  return hslColor(h, s, l);
+}
+
+function cellColorHsl(bright, type, enabled, explored, level, forceVisited = false, expired = false) {
   const base = Math.max(TILE_COLOR_CONFIG.brightness.min, Math.min(TILE_COLOR_CONFIG.brightness.max, bright));
 
-  const toHsl = (palette) => `hsl(${palette.hue} ${palette.saturation}% ${base * palette.lightnessScale}%)`;
+  const toHsl = (palette) => ({
+    h: palette.hue,
+    s: palette.saturation,
+    l: base * palette.lightnessScale
+  });
 
+  if (type === 1 || type === 2) {
+    if (expired) return toHsl(TILE_COLOR_CONFIG.gadgetExpired);
+  }
   if (type === 1) {
     return enabled ? toHsl(TILE_COLOR_CONFIG.radar.active) : toHsl(TILE_COLOR_CONFIG.radar.inactive);
   }
@@ -394,7 +442,7 @@ function drawParticles(ctx, snapshot, unit) {
     const isHeart = particle.kind === 'heart';
     const size = unit * particle.size * (0.65 + (1 - lifeRatio) * 0.18);
     const alpha = isHeart
-      ? Math.floor(200 + lifeRatio * 55)
+      ? Math.floor(255)
       : Math.floor(70 + lifeRatio * 185);
     const alphaHex = alpha.toString(16).padStart(2, '0');
     ctx.fillStyle = `${particle.color}${alphaHex}`;
@@ -513,20 +561,31 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
   for (const cell of snapshot.cells) {
     if (!cell.inSight) continue;
     if (cell.bright <= snapshot.minBright && !snapshot.finish) continue;
-    fillCellRect(
-      ctx,
-      cell.x,
-      cell.y,
-      unit,
-      cellColor(
-        cell.bright,
-        cell.type,
-        cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView,
-        cell.explored,
-        snapshot.level,
-        !snapshot.finish
-      )
+    const enabled = cell.type === 1 ? snapshot.enableRadar : snapshot.enableMapView;
+    const isGadgetCell = cell.type === 1 || cell.type === 2;
+    const isExpired = isGadgetCell
+      && Number.isFinite(Number(cell.gadgetDurability))
+      && Number(cell.gadgetDurability) <= 0;
+    const baseHsl = cellColorHsl(
+      cell.bright,
+      cell.type,
+      enabled,
+      cell.explored,
+      snapshot.level,
+      !snapshot.finish,
+      isExpired
     );
+    const hasGadgetDurability = isGadgetCell
+      && Number.isFinite(Number(cell.gadgetDurability))
+      && Number.isFinite(Number(cell.gadgetMaxDurability))
+      && Number(cell.gadgetMaxDurability) > 0;
+
+    if (hasGadgetDurability) {
+      drawGadgetBurnCell(ctx, cell.x, cell.y, unit, baseHsl, cell);
+    } else {
+      fillCellRect(ctx, cell.x, cell.y, unit, hslColor(baseHsl.h, baseHsl.s, baseHsl.l));
+    }
+
     const x = cell.x * unit;
     const y = cell.y * unit;
     drawCellGlyph(ctx, cell, x, y, unit, stroke);

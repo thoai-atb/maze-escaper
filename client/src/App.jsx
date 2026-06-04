@@ -706,6 +706,7 @@ export default function App() {
   const predictedTrapsRef = useRef(new Set());
   const pendingMovesRef = useRef([]);
   const trapCloseTimersRef = useRef(new Map());
+  const poweredOffGadgetTilesRef = useRef(new Set());
   const levelActionRef = useRef({ enabled: false, mode: 'restart' });
   const showResultsRef = useRef(false);
 
@@ -746,11 +747,13 @@ export default function App() {
       clearTrapCloseTimers();
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
+      poweredOffGadgetTilesRef.current.clear();
     };
     const onGameMap = (data) => {
       setMapPayload(data?.map || null);
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
+      poweredOffGadgetTilesRef.current.clear();
     };
     const onGameInit = (data) => {
       setSnapshot(data?.snapshot || null);
@@ -868,6 +871,56 @@ export default function App() {
             });
           }
         }
+
+        if (event?.type === 'gadget_tile_update') {
+          setMapPayload((prevMap) => {
+            if (!prevMap?.cells || !Array.isArray(prevMap.cells)) return prevMap;
+            const x = Math.round(Number(event.x));
+            const y = Math.round(Number(event.y));
+            if (!Number.isInteger(x) || !Number.isInteger(y)) return prevMap;
+            if (x < 0 || y < 0 || x >= prevMap.cols || y >= prevMap.rows) return prevMap;
+
+            const idx = y * prevMap.cols + x;
+            const current = prevMap.cells[idx];
+            if (!current) return prevMap;
+
+            const nextDurability = Math.max(0, Math.round(Number(event.durability) || 0));
+            const nextMax = Math.max(1, Math.round(Number(event.maxDurability) || Number(current.gadgetMaxDurability) || 9));
+            const nextType = Math.round(Number(event.tileType) || current.type || 0);
+            const tileKey = trapCellKey(x, y);
+            const isGadgetTile = nextType === 1 || nextType === 2;
+
+            if (isGadgetTile && nextDurability <= 0) {
+              if (!poweredOffGadgetTilesRef.current.has(tileKey)) {
+                soundManager.play(SOUND.POWER_OFF);
+                poweredOffGadgetTilesRef.current.add(tileKey);
+              }
+            } else {
+              poweredOffGadgetTilesRef.current.delete(tileKey);
+            }
+
+            if (
+              Number(current.gadgetDurability) === nextDurability
+              && Number(current.gadgetMaxDurability) === nextMax
+              && Number(current.type) === nextType
+            ) {
+              return prevMap;
+            }
+
+            const nextCells = [...prevMap.cells];
+            nextCells[idx] = {
+              ...current,
+              type: nextType,
+              gadgetDurability: nextDurability,
+              gadgetMaxDurability: nextMax
+            };
+
+            return {
+              ...prevMap,
+              cells: nextCells
+            };
+          });
+        }
       }
 
       if (ui) {
@@ -904,6 +957,7 @@ export default function App() {
       clearTrapCloseTimers();
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
+      poweredOffGadgetTilesRef.current.clear();
     };
 
     socket.on('welcome', onWelcome);
@@ -1248,8 +1302,13 @@ export default function App() {
         if (mapPayload && movedTile && !player.dead && !player.escaped) {
           const cell = mapPayload.cells?.[player.y * mapPayload.cols + player.x];
           const prevCell = mapPayload.cells?.[prevPlayer.y * mapPayload.cols + prevPlayer.x];
-          if (cell?.type === 2 && prevCell?.type !== 2) soundManager.play(SOUND.MAP);
-          if (cell?.type === 1 && prevCell?.type !== 1) soundManager.play(SOUND.RADAR);
+          const isTileExpired = (c) => {
+            if (!c) return false;
+            if (!Number.isFinite(Number(c.gadgetDurability))) return false;
+            return Number(c.gadgetDurability) <= 0;
+          };
+          if (cell?.type === 2 && prevCell?.type !== 2 && !isTileExpired(cell)) soundManager.play(SOUND.MAP);
+          if (cell?.type === 1 && prevCell?.type !== 1 && !isTileExpired(cell)) soundManager.play(SOUND.RADAR);
         }
       }
 

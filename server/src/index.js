@@ -149,6 +149,12 @@ function getMapPayload(room) {
       x: c.x,
       y: c.y,
       type: c.type,
+      gadgetDurability: (c.type === 1 || c.type === 2)
+        ? Math.max(0, Math.round(Number(c.gadgetDurability) || 0))
+        : null,
+      gadgetMaxDurability: (c.type === 1 || c.type === 2)
+        ? Math.max(1, Math.round(Number(SERVER_CONFIG.world?.specialTileDurability) || 9))
+        : null,
       wallT: Boolean(c.wallT?.enable),
       wallB: Boolean(c.wallB?.enable),
       wallL: Boolean(c.wallL?.enable),
@@ -210,6 +216,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
     })),
     portals: fullSnapshot.portals,
     traps: fullSnapshot.traps,
+    gadgetTiles: fullSnapshot.gadgetTiles,
     particles: []
   };
 }
@@ -574,11 +581,17 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
   }
 
   if (Boolean(prevSnapshot.enableRadar) !== Boolean(nextSnapshot.enableRadar)) {
-    events.push({ type: 'radar_toggle', enabled: Boolean(nextSnapshot.enableRadar) });
+    events.push({
+      type: 'radar_toggle',
+      enabled: Boolean(nextSnapshot.enableRadar)
+    });
   }
 
   if (Boolean(prevSnapshot.enableMapView) !== Boolean(nextSnapshot.enableMapView)) {
-    events.push({ type: 'map_toggle', enabled: Boolean(nextSnapshot.enableMapView) });
+    events.push({
+      type: 'map_toggle',
+      enabled: Boolean(nextSnapshot.enableMapView)
+    });
   }
 
   if (Boolean(prevSnapshot.cheatEnabled) !== Boolean(nextSnapshot.cheatEnabled)) {
@@ -1221,11 +1234,6 @@ io.on('connection', (socket) => {
     if (!Number.isFinite(parsed)) return;
     const rttMs = Math.max(0, Math.min(5000, Math.round(parsed)));
     rttBySocket.set(socket.id, rttMs);
-
-    const roomCode = socketRoom.get(socket.id);
-    if (roomCode) {
-      emitRoomUpdate(roomCode);
-    }
   });
 
   socket.on('disconnect', () => {
@@ -1244,6 +1252,7 @@ setInterval(() => {
     if (room.resultsOpened) continue;
 
     room.engine.update(dt, inputQueueBySocket);
+    const gadgetTileUpdates = room.engine.consumeGadgetTileUpdates();
     if (room.engine.consumeMapDirty()) {
       // Tile-only updates should not reset client interpolation state.
       io.to(roomCode).emit('game:map', {
@@ -1282,6 +1291,18 @@ setInterval(() => {
     }
 
     const events = buildDeltaEvents(previousSnapshot, snapshot, fullSnapshot);
+    if (gadgetTileUpdates.length > 0) {
+      for (const tile of gadgetTileUpdates) {
+        events.push({
+          type: 'gadget_tile_update',
+          x: tile.x,
+          y: tile.y,
+          tileType: tile.type,
+          durability: Math.max(0, Math.round(Number(tile.durability) || 0)),
+          maxDurability: Math.max(1, Math.round(Number(tile.maxDurability) || 9))
+        });
+      }
+    }
     handlePlayerAudioAndDeathQueueFromEvents(io, roomCode, events, fullSnapshot);
     const nextUiState = buildUiState(room);
     const uiPatch = buildUiPatch(room.lastUiState, nextUiState);

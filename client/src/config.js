@@ -26,6 +26,11 @@ export const TILE_COLOR_CONFIG = Object.freeze({
       saturation: 72,
       lightnessScale: 0.44
     }
+  },
+  gadgetExpired: {
+    hue: 0,
+    saturation: 0,
+    lightnessScale: 0.46
   }
 });
 

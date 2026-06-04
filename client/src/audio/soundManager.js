@@ -12,7 +12,8 @@ const SOUND_FILES = {
   DOOR_CLOSE: '/audio/trapdoor_close.wav',
   KEY: '/audio/key.wav',
   GHOST_FADE: '/audio/ghost_fade.wav',
-  BOX: '/audio/box.wav'
+  BOX: '/audio/box.wav',
+  POWER_OFF: '/audio/power_off.wav'
 };
 
 class SoundManager {

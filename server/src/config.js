@@ -27,8 +27,10 @@ export const SERVER_CONFIG = {
     portalPulseSpeedPerMs: 0.0007, // Increase -> faster portal pulse animation. Decrease -> slower pulse animation.
     portalPulseMin: 0.9, // Increase -> raises smallest pulse size. Decrease -> allows smaller pulse size.
     portalPulseMax: 1.1, // Increase -> raises largest pulse size. Decrease -> caps largest pulse lower.
-    radarCellChance: 0.005, // Increase -> more radar cells. Decrease -> fewer radar cells.
-    bluePrintCellChance: 0.01 // Increase -> more blueprint cells. Decrease -> fewer blueprint cells.
+    gadgetCellChance: 0.02, // Total chance any cell is a gadget tile (radar or blueprint).
+    gadgetRadarRatio: 0.5,  // Of all gadget tiles, this fraction will be radar; the rest will be blueprint. 0.5 = equal split.
+    specialTileDurability: 9, // Max durability per gadget tile.
+    specialTileWearMs: 5000 // Occupied time required to consume one durability point.
   },
   trap: {
     activeMs: 3000, // Increase -> trap stays dangerous longer. Decrease -> dangerous window is shorter.
@@ -63,6 +65,7 @@ export const SERVER_CONFIG = {
         'portal_removed',
         'portal_added',
         'portal_charged',
+        'gadget_tile_update',
         'radar_toggle',
         'map_toggle',
         'cheat_toggle',
