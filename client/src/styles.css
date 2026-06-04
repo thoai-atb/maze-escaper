@@ -71,6 +71,23 @@ body {
   user-select: none;
 }
 
+.maze-info-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 10px;
+  z-index: 220;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 0.72rem;
+  color: rgba(242, 238, 232, 0.62);
+  letter-spacing: 0.03em;
+  text-align: right;
+  pointer-events: none;
+  user-select: none;
+}
+
 .panel-forms {
   max-width: 1050px;
   margin: 0 auto;

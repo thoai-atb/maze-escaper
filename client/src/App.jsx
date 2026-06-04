@@ -18,7 +18,7 @@ const MOVE_HOLD_INITIAL_DELAY_MS = 200;
 const MOVE_HOLD_REPEAT_MS = 200;
 const MAZE_ALGORITHM_OPTIONS = [
   { value: 'prim', label: 'Randomized Prim' },
-  { value: 'dfs', label: 'Recursive Backtracker (DFS)' },
+  { value: 'dfs', label: 'Backtracking DFS' },
   { value: 'backbite', label: 'Backbite' },
   { value: 'subdivspiral', label: 'Subdivided Spirals' },
   { value: 'growingtree', label: 'Growing Tree' }
@@ -643,6 +643,20 @@ function CopyrightBadge() {
   return <div className="copyright-badge">{`\u00A9 Thoai Ly 2026`}</div>;
 }
 
+function MazeInfoBadge({ roomStatus, snapshot }) {
+  const source = roomStatus || snapshot;
+  const rows = Number(source?.rows) || 0;
+  const cols = Number(source?.cols) || 0;
+  if (!rows || !cols) return null;
+
+  return (
+    <div className="maze-info-badge">
+      <span>Maze {rows}x{cols}</span>
+      <span>{mazeAlgorithmLabel(source?.mazeAlgorithm)}</span>
+    </div>
+  );
+}
+
 export default function App() {
   const [viewportSize, setViewportSize] = useState({
     width: getViewportSize().width,
@@ -654,7 +668,6 @@ export default function App() {
     return saved ? saved.slice(0, 20) : '';
   });
   const [roomCodeInput, setRoomCodeInput] = useState('');
-  const [mazeAlgorithm, setMazeAlgorithm] = useState('prim');
 
   const [roomCode, setRoomCode] = useState('');
   const [roomStatus, setRoomStatus] = useState(null);
@@ -1295,8 +1308,7 @@ export default function App() {
     socket.emit(
       'room:create',
       {
-        name: enteredName,
-        mazeAlgorithm
+        name: enteredName
       },
       (res) => {
         if (!res?.ok) {
@@ -1512,6 +1524,8 @@ export default function App() {
           {snapshot?.finish && (
             <div className="round-finish-overlay" role="status" aria-live="polite">
               <div className="round-finish-card">
+
+        <MazeInfoBadge roomStatus={roomStatus} snapshot={snapshot} />
                 <h2 className="round-finish-title">Round Over</h2>
                 <div className="round-finish-list">
                   {roundFinishPlayers.map((p) => (
@@ -1642,14 +1656,7 @@ export default function App() {
             <article className="card">
               <h2>Create Room</h2>
               <p>Level starts at 1 and increases each restart until the final level.</p>
-              <div className="field">
-                <label>Maze Algorithm</label>
-                <select value={mazeAlgorithm} onChange={(e) => setMazeAlgorithm(e.target.value)}>
-                  {MAZE_ALGORITHM_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
+              <p>Maze generation is randomized by the server.</p>
               <p>Player slots are fixed to 6.</p>
               <button onClick={createRoom} disabled={!hasValidName}>Create</button>
             </article>
@@ -1733,8 +1740,7 @@ export default function App() {
 
             <div className="status-card">
               <h3>Controls</h3>
-              <p>Level {roomLevel} - Maze {roomRows}x{roomCols}</p>
-              <p>Algorithm: {mazeAlgorithmLabel(roomStatus?.mazeAlgorithm)}</p>
+              <p>Maze generation is randomized by the server.</p>
               <ControlsLegend showRoundKeys={false} />
               <p>Radar: Step on radar tile to show pings.</p>
               <p>Goal: Find key, unlock exit, escape right side.</p>

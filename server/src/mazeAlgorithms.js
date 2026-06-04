@@ -5,7 +5,7 @@ const ALGORITHMS = {
   },
   dfs: {
     id: 'dfs',
-    label: 'Recursive Backtracker (DFS)'
+    label: 'Backtracking DFS'
   },
   backbite: {
     id: 'backbite',

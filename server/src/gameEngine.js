@@ -14,6 +14,30 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function pickWeightedMazeAlgorithm() {
+  const biasedEntries = Array.isArray(SERVER_CONFIG.mazeAlgorithm?.weightedBias)
+    ? SERVER_CONFIG.mazeAlgorithm.weightedBias
+    : [];
+
+  const entries = biasedEntries
+    .map((entry) => ({
+      id: normalizeMazeAlgorithm(entry?.id),
+      weight: Math.max(0, Number(entry?.weight) || 0)
+    }))
+    .filter((entry) => entry.weight > 0);
+
+  const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  if (totalWeight <= 0) return DEFAULT_MAZE_ALGORITHM;
+
+  let roll = Math.random() * totalWeight;
+  for (const entry of entries) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.id;
+  }
+
+  return entries[entries.length - 1]?.id || DEFAULT_MAZE_ALGORITHM;
+}
+
 function keyOf(x, y, cols) {
   return y * cols + x;
 }
@@ -32,12 +56,12 @@ function rowsForLevel(level) {
 }
 
 export class GameEngine {
-  constructor({ level = 1, maxPlayers = 6, cheatEnabled = false, mazeAlgorithm = DEFAULT_MAZE_ALGORITHM }) {
+  constructor({ level = 1, maxPlayers = 6, cheatEnabled = false, mazeAlgorithm = null }) {
     this.level = normalizeLevel(level);
     this.rows = rowsForLevel(this.level);
     this.cols = this.rows * 2;
     this.maxPlayers = clamp(maxPlayers, 1, 6);
-    this.mazeAlgorithm = normalizeMazeAlgorithm(mazeAlgorithm);
+    this.mazeAlgorithm = normalizeMazeAlgorithm(mazeAlgorithm || pickWeightedMazeAlgorithm());
 
     this.cells = [];
     this.walls = [];
@@ -81,7 +105,6 @@ export class GameEngine {
       level: nextLevel,
       maxPlayers: prev.maxPlayers,
       cheatEnabled: prev.cheatEnabled,
-      mazeAlgorithm: prev.mazeAlgorithm
     });
 
     for (const prevPlayer of prev.players) {

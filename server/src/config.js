@@ -91,6 +91,16 @@ export const SERVER_CONFIG = {
       // Comment out any item above to disable it for testing.
     ]
   },
+  mazeAlgorithm: {
+    weightedBias: [
+      { id: 'prim', weight: 3 },
+      { id: 'dfs', weight: 2 },
+      { id: 'growingtree', weight: 2 },
+      { id: 'subdivspiral', weight: 1 },
+      { id: 'backbite', weight: 1 }
+      // Higher weight = more likely. Comment out an entry to remove it from the random pool.
+    ]
+  },
   level: {
     min: 1, // First level number.
     max: 8, // Last level number. Increase -> more levels before game ends.

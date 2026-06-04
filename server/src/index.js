@@ -7,7 +7,6 @@ import { Server } from 'socket.io';
 import { customAlphabet } from 'nanoid';
 import { GameEngine } from './gameEngine.js';
 import { SERVER_CONFIG } from './config.js';
-import { normalizeMazeAlgorithm } from './mazeAlgorithms.js';
 
 const app = express();
 app.use(cors());
@@ -781,12 +780,12 @@ function getLevelResults(room) {
   return levelHistory;
 }
 
-function createRoom({ hostSocketId, hostName, mazeAlgorithm }) {
+function createRoom({ hostSocketId, hostName }) {
   const roomCode = nanoid();
   const engine = new GameEngine({
     level: 1,
     maxPlayers: FIXED_MAX_PLAYERS,
-    mazeAlgorithm: normalizeMazeAlgorithm(mazeAlgorithm)
+    mazeAlgorithm: null
   });
   const createdAt = Date.now();
   const room = {
@@ -930,8 +929,7 @@ io.on('connection', (socket) => {
 
       const room = createRoom({
         hostSocketId: socket.id,
-        hostName: payload?.name || 'Host',
-        mazeAlgorithm: payload?.mazeAlgorithm
+        hostName: payload?.name || 'Host'
       });
 
       if (!room) {
