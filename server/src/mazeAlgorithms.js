@@ -5,7 +5,7 @@ const ALGORITHMS = {
   },
   dfs: {
     id: 'dfs',
-    label: 'Backtracking DFS'
+    label: 'DFS + Braiding'
   },
   backbite: {
     id: 'backbite',
@@ -237,6 +237,32 @@ function generateDfsBacktracker(cells, cols, getCell) {
     choice.cell.visited = true;
     stack.push(cells[choice.cell.y * cols + choice.cell.x]);
   }
+
+  // Light braiding pass keeps DFS style while reducing a small portion of dead ends.
+  braidDeadEnds(cells, cols, getCell, 0.06);
+}
+
+// Braiding: for each dead-end cell (only one open passage), remove one additional
+// wall to a neighbour with some probability, creating a loop and reducing dead ends.
+function braidDeadEnds(cells, cols, getCell, probability) {
+  for (const cell of cells) {
+    // Count open passages (disabled walls = carved passages).
+    const dirs = [
+      { neighbor: getCell(cell.x, cell.y - 1), wall: cell.wallT },
+      { neighbor: getCell(cell.x + 1, cell.y), wall: cell.wallR },
+      { neighbor: getCell(cell.x, cell.y + 1), wall: cell.wallB },
+      { neighbor: getCell(cell.x - 1, cell.y), wall: cell.wallL }
+    ];
+    const openCount = dirs.filter((d) => d.wall && !d.wall.enable).length;
+    if (openCount !== 1) continue; // only braid true dead ends
+    if (Math.random() >= probability) continue;
+
+    // Pick a random still-walled neighbour to carve into.
+    const candidates = dirs.filter((d) => d.neighbor && d.wall && d.wall.enable);
+    if (candidates.length === 0) continue;
+    const choice = pickRandom(candidates);
+    choice.wall.enable = false;
+  }
 }
 
 function generateBackbite(cells, cols, getCell) {
@@ -247,6 +273,9 @@ function generateBackbite(cells, cols, getCell) {
   randomizeHamiltonianPath(path, cols, getCell, path.length * 12);
 
   carvePathByCoordinates(path, getCell, cols);
+
+  // Light braiding pass: randomly open a small fraction of dead ends to add loops.
+  braidDeadEnds(cells, cols, getCell, 1);
 }
 
 function spiralPathForRegion(x, y, w, h) {
@@ -276,12 +305,15 @@ function spiralPathForRegion(x, y, w, h) {
 
 function splitRegion(x, y, w, h, out) {
   const MIN_SIZE = 3;
-  if (w <= MIN_SIZE * 2 || h <= MIN_SIZE * 2) {
+  const canSplitVertical = w > MIN_SIZE * 2;
+  const canSplitHorizontal = h > MIN_SIZE * 2;
+
+  if (!canSplitVertical && !canSplitHorizontal) {
     out.push({ x, y, w, h });
     return;
   }
 
-  const splitVertical = w > h;
+  const splitVertical = canSplitVertical && (!canSplitHorizontal || w >= h);
   if (splitVertical) {
     const cut = randInt(x + MIN_SIZE, x + w - MIN_SIZE);
     splitRegion(x, y, cut - x, h, out);

@@ -18,7 +18,7 @@ const MOVE_HOLD_INITIAL_DELAY_MS = 200;
 const MOVE_HOLD_REPEAT_MS = 200;
 const MAZE_ALGORITHM_OPTIONS = [
   { value: 'prim', label: 'Randomized Prim' },
-  { value: 'dfs', label: 'Backtracking DFS' },
+  { value: 'dfs', label: 'DFS + Braiding' },
   { value: 'backbite', label: 'Backbite' },
   { value: 'subdivspiral', label: 'Subdivided Spirals' },
   { value: 'growingtree', label: 'Growing Tree' }
