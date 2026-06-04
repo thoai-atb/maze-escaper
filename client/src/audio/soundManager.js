@@ -11,7 +11,8 @@ const SOUND_FILES = {
   PORTAL: '/audio/portal.wav',
   DOOR_CLOSE: '/audio/trapdoor_close.wav',
   KEY: '/audio/key.wav',
-  GHOST_FADE: '/audio/ghost_fade.wav'
+  GHOST_FADE: '/audio/ghost_fade.wav',
+  BOX: '/audio/box.wav'
 };
 
 class SoundManager {

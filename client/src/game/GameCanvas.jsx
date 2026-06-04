@@ -18,9 +18,24 @@ function spawnBurst(particles, x, y, color, count = 12, speed = 1) {
       life: 420 + Math.random() * 260,
       maxLife: 680,
       color,
-      size: 0.05 + Math.random() * 0.05
+      size: 0.05 + Math.random() * 0.05,
+      kind: 'dot'
     });
   }
+}
+
+function spawnHeartBurst(particles, x, y) {
+  particles.push({
+    x,
+    y,
+    vx: (Math.random() - 0.5) * 0.00015,
+    vy: -0.00055,
+    life: 900,
+    maxLife: 900,
+    color: '#ff4d7a',
+    size: 0.34,
+    kind: 'heart'
+  });
 }
 
 function updateParticles(particles, dtMs) {
@@ -40,6 +55,28 @@ function updateParticles(particles, dtMs) {
 
 function addTransitionParticles(prevSnapshot, nextSnapshot, particles) {
   if (!prevSnapshot || !nextSnapshot) return;
+
+  if (prevSnapshot.mysteryBox && !nextSnapshot.mysteryBox) {
+    const boxX = Number(prevSnapshot.mysteryBox.x);
+    const boxY = Number(prevSnapshot.mysteryBox.y);
+    if (Number.isFinite(boxX) && Number.isFinite(boxY)) {
+      spawnBurst(particles, boxX, boxY, '#ff5c8d', 18, 1.2);
+      spawnBurst(particles, boxX, boxY, '#ffd65c', 12, 1.05);
+    }
+  }
+
+  const prevOpenSeq = Number(prevSnapshot.mysteryBoxLastOpen?.seq) || 0;
+  const nextOpenSeq = Number(nextSnapshot.mysteryBoxLastOpen?.seq) || 0;
+  if (nextOpenSeq > prevOpenSeq) {
+    const open = nextSnapshot.mysteryBoxLastOpen;
+    if (open?.outcome === 'add_life') {
+      spawnHeartBurst(particles, Number(open.x) || 0, Number(open.y) || 0);
+    } else if (open?.outcome === 'spawn_map_tile') {
+      spawnBurst(particles, Number(open.x) || 0, Number(open.y) || 0, '#4dc6ff', 14, 1.05);
+    } else if (open?.outcome === 'spawn_radar_tile') {
+      spawnBurst(particles, Number(open.x) || 0, Number(open.y) || 0, '#7bff7b', 14, 1.05);
+    }
+  }
 
   for (const player of nextSnapshot.players || []) {
     const prevPlayer = prevSnapshot.players?.find((p) => p.id === player.id);
@@ -327,6 +364,16 @@ function buildRenderSnapshot(
     if (owner) key = { ...key, x: owner.cx, y: owner.cy };
   }
 
+  let mysteryBox = dynamicSnapshot.mysteryBox;
+  if (mysteryBox?.type === 'player') {
+    const owner = players.find((p) => p.id === mysteryBox.playerId);
+    if (owner) mysteryBox = { ...mysteryBox, x: owner.cx, y: owner.cy };
+  }
+  if (mysteryBox?.type === 'ghost') {
+    const owner = ghosts.find((g) => g.id === mysteryBox.ghostId);
+    if (owner) mysteryBox = { ...mysteryBox, x: owner.cx, y: owner.cy };
+  }
+
   return {
     ...dynamicSnapshot,
     rows,
@@ -338,6 +385,7 @@ function buildRenderSnapshot(
       y: mapPayload.exit?.y ?? dynamicSnapshot.exit?.y
     },
     key,
+    mysteryBox,
     cells,
     walls,
     players,

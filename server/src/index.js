@@ -113,6 +113,14 @@ function handlePlayerAudioAndDeathQueueFromEvents(ioServer, roomCode, events, fu
       continue;
     }
 
+    if (event.type === 'mystery_box_opened') {
+      console.log(
+        `[mystery-box][${roomCode}] opened by player=${Number(event.playerId) || 'unknown'} outcome=${String(event.outcome || 'unknown')} hearts=${Math.max(0, Number(event.hearts) || 0)} at=(${Math.round(Number(event.x) || 0)},${Math.round(Number(event.y) || 0)})`
+      );
+      emitRoomAudio(ioServer, roomCode, 'BOX');
+      continue;
+    }
+
     if (event.type === 'player_die') {
       if (handledPlayerDeaths.has(event.id)) continue;
       handledPlayerDeaths.add(event.id);
@@ -172,6 +180,8 @@ function buildDynamicSnapshot(room, fullSnapshot) {
     canRestart: fullSnapshot.canRestart,
     exit: fullSnapshot.exit,
     key: fullSnapshot.key,
+    mysteryBox: fullSnapshot.mysteryBox,
+    mysteryBoxLastOpen: fullSnapshot.mysteryBoxLastOpen,
     players: fullSnapshot.players.map((p) => ({
       id: p.id,
       socketId: p.socketId,
@@ -185,6 +195,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       teleported: Boolean(p.teleported),
       diameter: p.diameter,
       hasKey: p.hasKey,
+      hasMysteryBox: p.hasMysteryBox,
       relocating: Boolean(p.pendingRelocate)
     })),
     ghosts: fullSnapshot.ghosts.map((g) => ({
@@ -195,7 +206,8 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       teleported: Boolean(g.teleported),
       diameter: g.diameter,
       crazy: g.crazy,
-      hasKey: g.hasKey
+      hasKey: g.hasKey,
+      hasMysteryBox: g.hasMysteryBox
     })),
     portals: fullSnapshot.portals,
     traps: fullSnapshot.traps,
@@ -302,6 +314,17 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
     return null;
   };
 
+  const mysteryBoxOwner = (mysteryBox) => {
+    if (!mysteryBox || typeof mysteryBox !== 'object') return null;
+    if (mysteryBox.type === 'player' && Number.isFinite(Number(mysteryBox.playerId))) {
+      return { type: 'player', id: Number(mysteryBox.playerId) };
+    }
+    if (mysteryBox.type === 'ghost' && Number.isFinite(Number(mysteryBox.ghostId))) {
+      return { type: 'ghost', id: Number(mysteryBox.ghostId) };
+    }
+    return null;
+  };
+
   for (const player of nextSnapshot.players || []) {
     const prevPlayer = prevPlayersById.get(player.id);
     if (!prevPlayer) continue;
@@ -351,6 +374,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       || playerFallTransition
       || shouldEmitPlayerDiameter
       || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
+      || Boolean(prevPlayer.hasMysteryBox) !== Boolean(player.hasMysteryBox)
       || Boolean(prevPlayer.relocating) !== Boolean(player.relocating)
     );
 
@@ -362,6 +386,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         escaped: player.escaped,
         fall: player.fall,
         hasKey: player.hasKey,
+        hasMysteryBox: player.hasMysteryBox,
         relocating: Boolean(player.relocating),
         durationMs: player.fall ? playerFallDurationMs : undefined
       });
@@ -381,7 +406,24 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
 
   for (const ghost of nextSnapshot.ghosts || []) {
     const prevGhost = prevGhostsById.get(ghost.id);
-    if (!prevGhost) continue;
+    if (!prevGhost) {
+      if (isGhostVisible(ghost, null)) {
+        events.push({
+          type: 'ghost_added',
+          ghost: {
+            id: ghost.id,
+            x: ghost.x,
+            y: ghost.y,
+            fall: ghost.fall,
+            hasKey: ghost.hasKey,
+            hasMysteryBox: ghost.hasMysteryBox,
+            crazy: ghost.crazy,
+            diameter: ghost.diameter
+          }
+        });
+      }
+      continue;
+    }
     if (!isGhostVisible(ghost, prevGhost)) continue;
 
     const moved = ghost.x !== prevGhost.x || ghost.y !== prevGhost.y;
@@ -415,6 +457,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       ghostFallTransition
       || shouldEmitGhostDiameter
       || Boolean(prevGhost.hasKey) !== Boolean(ghost.hasKey)
+      || Boolean(prevGhost.hasMysteryBox) !== Boolean(ghost.hasMysteryBox)
     );
 
     if (ghostStateChanged) {
@@ -423,6 +466,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         id: ghost.id,
         fall: ghost.fall,
         hasKey: ghost.hasKey,
+        hasMysteryBox: ghost.hasMysteryBox,
         crazy: ghost.crazy,
         durationMs: ghost.fall ? ghostFallDurationMs : undefined
       });
@@ -586,6 +630,43 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
 
   if (nextKeyOwner && ownerChanged) {
     events.push({ type: 'key_picked_up', by: nextKeyOwner });
+  }
+
+  const prevBoxOwner = mysteryBoxOwner(prevSnapshot.mysteryBox);
+  const nextBoxOwner = mysteryBoxOwner(nextSnapshot.mysteryBox);
+  const boxOwnerChanged = (
+    (prevBoxOwner?.type ?? null) !== (nextBoxOwner?.type ?? null)
+    || (prevBoxOwner?.id ?? null) !== (nextBoxOwner?.id ?? null)
+  );
+
+  if (nextSnapshot.mysteryBox?.type === 'cell') {
+    const boxX = Math.round(Number(nextSnapshot.mysteryBox.x) || 0);
+    const boxY = Math.round(Number(nextSnapshot.mysteryBox.y) || 0);
+    const prevWasSameCell = prevSnapshot.mysteryBox?.type === 'cell'
+      && Math.round(Number(prevSnapshot.mysteryBox.x) || 0) === boxX
+      && Math.round(Number(prevSnapshot.mysteryBox.y) || 0) === boxY;
+
+    if (!prevWasSameCell) {
+      events.push({ type: 'mystery_box_dropped', x: boxX, y: boxY });
+    }
+  }
+
+  if (nextBoxOwner && boxOwnerChanged) {
+    events.push({ type: 'mystery_box_picked_up', by: nextBoxOwner });
+  }
+
+  const prevBoxOpenSeq = Number(prevSnapshot.mysteryBoxLastOpen?.seq) || 0;
+  const nextBoxOpenSeq = Number(nextSnapshot.mysteryBoxLastOpen?.seq) || 0;
+  if (nextBoxOpenSeq > prevBoxOpenSeq) {
+    const open = nextSnapshot.mysteryBoxLastOpen || {};
+    events.push({
+      type: 'mystery_box_opened',
+      x: Math.round(Number(open.x) || 0),
+      y: Math.round(Number(open.y) || 0),
+      playerId: Number(open.playerId) || null,
+      outcome: String(open.outcome || ''),
+      hearts: Math.max(0, Number(open.hearts) || 0)
+    });
   }
 
   return events;
@@ -1165,6 +1246,17 @@ setInterval(() => {
     if (room.resultsOpened) continue;
 
     room.engine.update(dt, inputQueueBySocket);
+    if (room.engine.consumeMapDirty()) {
+      // Tile-only updates should not reset client interpolation state.
+      io.to(roomCode).emit('game:map', {
+        map: getMapPayload(room)
+      });
+    }
+    const heartRewards = room.engine.consumePendingHeartRewards();
+    if (heartRewards > 0) {
+      room.remainingLives = Math.max(0, room.remainingLives + heartRewards);
+      room.failurePenaltyApplied = false;
+    }
     const fullSnapshot = room.engine.getSnapshot();
     const snapshot = withPlayerRtt(buildDynamicSnapshot(room, fullSnapshot));
 

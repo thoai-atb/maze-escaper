@@ -79,6 +79,18 @@ export const SERVER_CONFIG = {
   finish: {
     fadePerSecond: 100 // Increase -> faster end-round fade to full visibility. Decrease -> slower fade.
   },
+  mysteryBox: {
+    outcomes: [
+      'spawn_portal',
+      'spawn_crazy',
+      'add_life',
+      'spawn_map_tile',
+      'spawn_radar_tile',
+      'give_key',
+      'swap_player'
+      // Comment out any item above to disable it for testing.
+    ]
+  },
   level: {
     min: 1, // First level number.
     max: 8, // Last level number. Increase -> more levels before game ends.

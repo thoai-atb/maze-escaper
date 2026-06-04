@@ -58,12 +58,17 @@ export class GameEngine {
     this.nextGhostId = 1;
 
     this.tickMs = 0;
+    this.pendingHeartRewards = 0;
+    this.mapDirty = false;
+    this.mysteryBoxOpenSeq = 0;
+    this.lastMysteryBoxOpen = null;
     this._buildCells();
     this._buildWalls();
     this._generateMaze();
     this._spawnWorldItems();
     this._spawnPlayers();
     this._spawnKey();
+    this._spawnMysteryBox();
     this._updateVision();
   }
 
@@ -253,6 +258,31 @@ export class GameEngine {
     };
   }
 
+  _spawnMysteryBox() {
+    const maxAttempts = Math.max(1, this.rows * this.cols * 3);
+    for (let i = 0; i < maxAttempts; i += 1) {
+      const x = randInt(0, this.cols);
+      const y = randInt(0, this.rows);
+      if (this.keyOwner?.type === 'cell' && this.keyOwner.x === x && this.keyOwner.y === y) continue;
+      this.mysteryBoxOwner = { type: 'cell', x, y };
+      return;
+    }
+
+    this.mysteryBoxOwner = { type: 'cell', x: 0, y: 0 };
+  }
+
+  consumePendingHeartRewards() {
+    const reward = Math.max(0, Number(this.pendingHeartRewards) || 0);
+    this.pendingHeartRewards = 0;
+    return reward;
+  }
+
+  consumeMapDirty() {
+    const dirty = Boolean(this.mapDirty);
+    this.mapDirty = false;
+    return dirty;
+  }
+
   attachPlayer(socketId, name) {
     const slot = this.players.find((p) => !p.socketId);
     if (!slot) return null;
@@ -415,6 +445,7 @@ export class GameEngine {
 
       this._checkUnlockExit(player);
       this._checkPortalFor(player);
+      this._checkMysteryBoxPickup(player);
     }
   }
 
@@ -439,6 +470,7 @@ export class GameEngine {
             if (killer) killer.ghostKillsRound = (Number(killer.ghostKillsRound) || 0) + 1;
           }
           this._updateKeyOwnerOnGhostDeath(ghost);
+          this._updateMysteryBoxOwnerOnGhostDeath(ghost);
           ghost.killedByPlayerId = null;
           ghost.dead = true;
         }
@@ -481,6 +513,7 @@ export class GameEngine {
       this._checkPortalFor(ghost);
       this._checkTrapFor(ghost);
       this._checkKeyPickup(ghost);
+      this._checkMysteryBoxPickup(ghost);
     }
 
     this.ghosts = this.ghosts.filter((g) => !g.dead);
@@ -757,6 +790,7 @@ export class GameEngine {
         entity.teleported = true;
         if (entity.id) this._markCellExplored(entity.x, entity.y);
         this._checkKeyPickup(entity);
+        this._checkMysteryBoxPickup(entity);
 
         if (entity.ghostId && entity.crazy) {
           this._resetCrazyGhostCycle(entity);
@@ -790,8 +824,199 @@ export class GameEngine {
     }
 
     if (entity.ghostId) {
+      if (this.mysteryBoxOwner?.type === 'ghost' && this.mysteryBoxOwner.ghostId === entity.ghostId) return;
       this.keyOwner = { type: 'ghost', ghostId: entity.ghostId };
     }
+  }
+
+  _checkMysteryBoxPickup(entity) {
+    if (!this.mysteryBoxOwner) return;
+
+    if (this.mysteryBoxOwner.type === 'cell') {
+      if (this.mysteryBoxOwner.x !== entity.x || this.mysteryBoxOwner.y !== entity.y) return;
+
+      if (entity.id) {
+        this._applyMysteryBoxOutcome(entity);
+        this.mysteryBoxOwner = null;
+        return;
+      }
+
+      if (entity.ghostId) {
+        if (this.keyOwner?.type === 'ghost' && this.keyOwner.ghostId === entity.ghostId) return;
+        this.mysteryBoxOwner = { type: 'ghost', ghostId: entity.ghostId };
+      }
+      return;
+    }
+
+    if (this.mysteryBoxOwner.type === 'ghost' && entity.id) {
+      // Players opening a ghost-carried box is intentionally disabled for now.
+      return;
+    }
+  }
+
+  _applyMysteryBoxOutcome(player) {
+    const boxX = Math.round(Number(this.mysteryBoxOwner?.x) || player.x);
+    const boxY = Math.round(Number(this.mysteryBoxOwner?.y) || player.y);
+    const configuredOutcomes = Array.isArray(SERVER_CONFIG.mysteryBox?.outcomes)
+      ? SERVER_CONFIG.mysteryBox.outcomes
+      : [];
+    const allOutcomes = configuredOutcomes
+      .map((outcome) => String(outcome || '').trim())
+      .filter(Boolean);
+
+    const playerAlreadyHasKey = this.keyOwner?.type === 'player' && this.keyOwner.playerId === player.id;
+    if (playerAlreadyHasKey) {
+      const keyIdx = allOutcomes.indexOf('give_key');
+      if (keyIdx >= 0) allOutcomes.splice(keyIdx, 1);
+    }
+
+    const connectedPlayers = this.getConnectedPlayers();
+    if (connectedPlayers.length <= 1) {
+      const swapIdx = allOutcomes.indexOf('swap_player');
+      if (swapIdx >= 0) allOutcomes.splice(swapIdx, 1);
+    }
+
+    if (allOutcomes.length === 0) {
+      // Safe fallback when everything is commented out or filtered.
+      allOutcomes.push('add_life');
+    }
+
+    const outcome = pickRandom(allOutcomes);
+    const result = {
+      seq: this.mysteryBoxOpenSeq + 1,
+      x: boxX,
+      y: boxY,
+      playerId: player.id,
+      outcome,
+      hearts: 0
+    };
+
+    if (outcome === 'spawn_portal') {
+      this._spawnPortalFromMysteryBox(boxX, boxY);
+    } else if (outcome === 'spawn_crazy') {
+      this._spawnCrazyGhostFromMysteryBox(boxX, boxY);
+    } else if (outcome === 'add_life') {
+      this.pendingHeartRewards += 1;
+      result.hearts = 1;
+    } else if (outcome === 'spawn_map_tile') {
+      this._spawnTileFromMysteryBox(2, boxX, boxY);
+    } else if (outcome === 'spawn_radar_tile') {
+      this._spawnTileFromMysteryBox(1, boxX, boxY);
+    } else if (outcome === 'give_key') {
+      this.keyOwner = { type: 'player', playerId: player.id };
+    } else if (outcome === 'swap_player') {
+      this._swapPlayerFromMysteryBox(player);
+    }
+
+    this.mysteryBoxOpenSeq = result.seq;
+    this.lastMysteryBoxOpen = result;
+  }
+
+  _spawnPortalFromMysteryBox(x, y) {
+    const existing = this.portals.find((p) => p.x === x && p.y === y);
+    if (existing) {
+      existing.activationMs = 0;
+      existing.pulse = 1;
+      existing.pulseDir = 1;
+      return;
+    }
+
+    this.portals.push({
+      x,
+      y,
+      activationMs: 0,
+      pulse: 1,
+      pulseDir: 1
+    });
+  }
+
+  _spawnCrazyGhostFromMysteryBox(x, y) {
+    this.ghosts.push({
+      ghostId: this.nextGhostId++,
+      x,
+      y,
+      cx: x,
+      cy: y,
+      fx: x,
+      fy: y,
+      dead: false,
+      fall: false,
+      crazy: true,
+      lastMoveAt: this.tickMs,
+      diameter: 0.5,
+      killedByPlayerId: null,
+      teleported: false,
+      route: [],
+      targetX: null,
+      targetY: null,
+      routeStartedAt: 0,
+      restUntilMs: 0
+    });
+  }
+
+  _spawnTileFromMysteryBox(tileType, x, y) {
+    const cell = this._getCell(x, y);
+    if (!cell) return;
+    if (cell.type !== 0) return;
+    cell.type = tileType;
+    this.mapDirty = true;
+  }
+
+  _swapPlayerFromMysteryBox(player) {
+    const others = this.getConnectedPlayers().filter((p) => p.id !== player.id && !p.escaped);
+    if (others.length === 0) return;
+    const other = pickRandom(others);
+
+    const prevPlayer = { x: player.x, y: player.y, cx: player.cx, cy: player.cy, fx: player.fx, fy: player.fy };
+    const prevOther = { x: other.x, y: other.y, cx: other.cx, cy: other.cy, fx: other.fx, fy: other.fy };
+    const prevPlayerState = {
+      dead: player.dead,
+      fall: player.fall,
+      diameter: player.diameter,
+      reviveStartedAt: player.reviveStartedAt,
+      pendingRelocate: player.pendingRelocate
+    };
+    const prevOtherState = {
+      dead: other.dead,
+      fall: other.fall,
+      diameter: other.diameter,
+      reviveStartedAt: other.reviveStartedAt,
+      pendingRelocate: other.pendingRelocate
+    };
+
+    player.x = prevOther.x;
+    player.y = prevOther.y;
+    player.cx = prevOther.x;
+    player.cy = prevOther.y;
+    player.fx = prevOther.x;
+    player.fy = prevOther.y;
+
+    other.x = prevPlayer.x;
+    other.y = prevPlayer.y;
+    other.cx = prevPlayer.x;
+    other.cy = prevPlayer.y;
+    other.fx = prevPlayer.x;
+    other.fy = prevPlayer.y;
+
+    player.dead = prevOtherState.dead;
+    player.fall = prevOtherState.fall;
+    player.diameter = prevOtherState.diameter;
+    player.reviveStartedAt = prevOtherState.reviveStartedAt;
+    player.pendingRelocate = prevOtherState.pendingRelocate;
+
+    other.dead = prevPlayerState.dead;
+    other.fall = prevPlayerState.fall;
+    other.diameter = prevPlayerState.diameter;
+    other.reviveStartedAt = prevPlayerState.reviveStartedAt;
+    other.pendingRelocate = prevPlayerState.pendingRelocate;
+
+    if (this.keyOwner?.type === 'player') {
+      if (this.keyOwner.playerId === player.id) this.keyOwner = { type: 'player', playerId: other.id };
+      else if (this.keyOwner.playerId === other.id) this.keyOwner = { type: 'player', playerId: player.id };
+    }
+
+    this._arrangePlayersAt(prevPlayer.x, prevPlayer.y);
+    this._arrangePlayersAt(prevOther.x, prevOther.y);
   }
 
   _isOpenAdjacentStep(ax, ay, bx, by) {
@@ -882,6 +1107,11 @@ export class GameEngine {
   _updateKeyOwnerOnGhostDeath(ghost) {
     if (!this.keyOwner || this.keyOwner.type !== 'ghost' || this.keyOwner.ghostId !== ghost.ghostId) return;
     this.keyOwner = { type: 'cell', x: Math.round(ghost.x), y: Math.round(ghost.y) };
+  }
+
+  _updateMysteryBoxOwnerOnGhostDeath(ghost) {
+    if (!this.mysteryBoxOwner || this.mysteryBoxOwner.type !== 'ghost' || this.mysteryBoxOwner.ghostId !== ghost.ghostId) return;
+    this.mysteryBoxOwner = { type: 'cell', x: Math.round(ghost.x), y: Math.round(ghost.y) };
   }
 
   _relocateDownedPlayer(player, keyDropX = null, keyDropY = null) {
@@ -1138,6 +1368,7 @@ export class GameEngine {
 
   getDynamicSnapshot() {
     const key = this._resolveKeyPosition();
+    const mysteryBox = this._resolveMysteryBoxPosition();
     return {
       level: this.level,
       mazeAlgorithm: this.mazeAlgorithm,
@@ -1155,6 +1386,8 @@ export class GameEngine {
         locked: this.exitLocked
       },
       key,
+      mysteryBox,
+      mysteryBoxLastOpen: this.lastMysteryBoxOpen,
       players: this.players.map((p) => ({
         id: p.id,
         socketId: p.socketId,
@@ -1171,6 +1404,7 @@ export class GameEngine {
         diameter: p.diameter,
         teleported: Boolean(p.teleported),
         hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id,
+        hasMysteryBox: this.mysteryBoxOwner?.type === 'player' && this.mysteryBoxOwner.playerId === p.id,
         pendingRelocate: p.pendingRelocate ?? null
       })),
       ghosts: this.ghosts.map((g) => ({
@@ -1183,7 +1417,8 @@ export class GameEngine {
         fall: g.fall,
         crazy: g.crazy,
         teleported: Boolean(g.teleported),
-        hasKey: this.keyOwner?.type === 'ghost' && this.keyOwner.ghostId === g.ghostId
+        hasKey: this.keyOwner?.type === 'ghost' && this.keyOwner.ghostId === g.ghostId,
+        hasMysteryBox: this.mysteryBoxOwner?.type === 'ghost' && this.mysteryBoxOwner.ghostId === g.ghostId
       })),
       portals: this.portals.map((p) => ({
         x: p.x,
@@ -1237,6 +1472,21 @@ export class GameEngine {
     const owner = this.players.find((p) => p.id === this.keyOwner.playerId);
     if (!owner) return null;
     return { type: 'player', playerId: owner.id, x: owner.x, y: owner.y };
+  }
+
+  _resolveMysteryBoxPosition() {
+    if (!this.mysteryBoxOwner) return null;
+    if (this.mysteryBoxOwner.type === 'cell') {
+      return { type: 'cell', x: this.mysteryBoxOwner.x, y: this.mysteryBoxOwner.y };
+    }
+    if (this.mysteryBoxOwner.type === 'ghost') {
+      const ghostOwner = this.ghosts.find((g) => g.ghostId === this.mysteryBoxOwner.ghostId);
+      if (!ghostOwner) return null;
+      return { type: 'ghost', ghostId: ghostOwner.ghostId, x: ghostOwner.x, y: ghostOwner.y };
+    }
+    const playerOwner = this.players.find((p) => p.id === this.mysteryBoxOwner.playerId);
+    if (!playerOwner) return null;
+    return { type: 'player', playerId: playerOwner.id, x: playerOwner.x, y: playerOwner.y };
   }
 
   getRoomStatus() {

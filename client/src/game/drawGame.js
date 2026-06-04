@@ -75,6 +75,30 @@ function drawKey(ctx, x, y, unit, scale = 1) {
   ctx.restore();
 }
 
+function drawMysteryBox(ctx, x, y, unit, scale = 1) {
+  const size = unit * 0.34 * scale;
+  const left = x + unit * 0.5 - size / 2;
+  const top = y + unit * 0.5 - size / 2;
+  const radius = Math.max(1, size * 0.18);
+
+  ctx.save();
+  ctx.fillStyle = '#8b4b1f';
+  ctx.strokeStyle = '#16110a';
+  ctx.lineWidth = Math.max(1, unit * 0.04 * scale);
+
+  roundedRectPath(ctx, left, top, size, size, radius);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffd65c';
+  const bandW = Math.max(1.5, size * 0.18);
+  roundedRectPath(ctx, left + (size - bandW) / 2, top + size * 0.02, bandW, size * 0.96, Math.max(0.8, radius * 0.4));
+  ctx.fill();
+  roundedRectPath(ctx, left + size * 0.02, top + size * 0.44, size * 0.96, Math.max(1.5, size * 0.12), Math.max(0.8, radius * 0.35));
+  ctx.fill();
+  ctx.restore();
+}
+
 function cellColor(bright, type, enabled, explored, level, forceVisited = false) {
   const base = Math.max(TILE_COLOR_CONFIG.brightness.min, Math.min(TILE_COLOR_CONFIG.brightness.max, bright));
 
@@ -338,6 +362,18 @@ function drawRadarOverlay(ctx, snapshot, unit, cols, options = {}) {
     }
   }
 
+  if (snapshot.mysteryBox) {
+    const boxX = snapshot.mysteryBox.x;
+    const boxY = snapshot.mysteryBox.y;
+    const cell = snapshot.cells[Math.round(boxY) * cols + Math.round(boxX)];
+    if (!cell?.inSight) {
+      ctx.fillStyle = '#ffb347';
+      ctx.beginPath();
+      ctx.arc((boxX + 0.5) * unit, (boxY + 0.5) * unit, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   ctx.restore();
 }
 
@@ -355,13 +391,29 @@ function drawParticles(ctx, snapshot, unit) {
     }
 
     const lifeRatio = Math.max(0, Math.min(1, particle.life / particle.maxLife));
-    const size = unit * particle.size * (0.55 + (1 - lifeRatio) * 0.4);
-    ctx.fillStyle = `${particle.color}${Math.floor(70 + lifeRatio * 185)
-      .toString(16)
-      .padStart(2, '0')}`;
-    ctx.beginPath();
-    ctx.arc((particle.x + 0.5) * unit, (particle.y + 0.5) * unit, size, 0, Math.PI * 2);
-    ctx.fill();
+    const isHeart = particle.kind === 'heart';
+    const size = unit * particle.size * (0.65 + (1 - lifeRatio) * 0.18);
+    const alpha = isHeart
+      ? Math.floor(200 + lifeRatio * 55)
+      : Math.floor(70 + lifeRatio * 185);
+    const alphaHex = alpha.toString(16).padStart(2, '0');
+    ctx.fillStyle = `${particle.color}${alphaHex}`;
+
+    const cx = (particle.x + 0.5) * unit;
+    const cy = (particle.y + 0.5) * unit;
+    if (isHeart) {
+      const fontSize = Math.max(12, size * 2.8);
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `700 ${fontSize}px "Segoe UI Symbol", "Apple Color Emoji", sans-serif`;
+      ctx.fillText('\u2665', cx, cy);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
@@ -710,6 +762,14 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     drawKey(ctx, snapshot.key.x * unit, snapshot.key.y * unit, unit, 1);
   }
 
+  if (snapshot.mysteryBox?.type === 'cell') {
+    const boxCell = snapshot.cells[Math.round(snapshot.mysteryBox.y) * cols + Math.round(snapshot.mysteryBox.x)];
+    const boxVisible = snapshot.finish || (boxCell?.inSight && boxCell.bright > snapshot.minBright);
+    if (boxVisible) {
+      drawMysteryBox(ctx, snapshot.mysteryBox.x * unit, snapshot.mysteryBox.y * unit, unit, 1);
+    }
+  }
+
   for (const player of snapshot.players) {
     if (!player.socketId) continue;
 
@@ -728,6 +788,11 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
 
     if (player.hasKey) {
       drawKey(ctx, player.cx * unit, player.cy * unit, unit, 0.45);
+    }
+    const playerCarriesMysteryBox = Boolean(player.hasMysteryBox)
+      || (snapshot.mysteryBox?.type === 'player' && snapshot.mysteryBox.playerId === player.id);
+    if (playerCarriesMysteryBox) {
+      drawMysteryBox(ctx, player.cx * unit, player.cy * unit, unit, 0.6);
     }
   }
 
@@ -757,6 +822,11 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
 
     if (ghost.hasKey) {
       drawKey(ctx, ghost.cx * unit, ghost.cy * unit, unit, 0.45);
+    }
+    const ghostCarriesMysteryBox = Boolean(ghost.hasMysteryBox)
+      || (snapshot.mysteryBox?.type === 'ghost' && snapshot.mysteryBox.ghostId === ghost.id);
+    if (ghostCarriesMysteryBox) {
+      drawMysteryBox(ctx, ghost.cx * unit, ghost.cy * unit, unit, 0.6);
     }
   }
   

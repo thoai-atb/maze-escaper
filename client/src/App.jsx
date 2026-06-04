@@ -164,7 +164,11 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
     traps: (prevSnapshot.traps || []).map((t) => ({ ...t })),
     portals: (prevSnapshot.portals || []).map((p) => ({ ...p })),
     exit: prevSnapshot.exit ? { ...prevSnapshot.exit } : prevSnapshot.exit,
-    key: prevSnapshot.key ? { ...prevSnapshot.key } : prevSnapshot.key
+    key: prevSnapshot.key ? { ...prevSnapshot.key } : prevSnapshot.key,
+    mysteryBox: prevSnapshot.mysteryBox ? { ...prevSnapshot.mysteryBox } : prevSnapshot.mysteryBox,
+    mysteryBoxLastOpen: prevSnapshot.mysteryBoxLastOpen
+      ? { ...prevSnapshot.mysteryBoxLastOpen }
+      : prevSnapshot.mysteryBoxLastOpen
   };
 
   const playerIndexById = new Map(next.players.map((p, i) => [p.id, i]));
@@ -194,6 +198,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? next.players[idx].escaped,
         fall: event.fall ?? next.players[idx].fall,
         hasKey: event.hasKey ?? next.players[idx].hasKey,
+        hasMysteryBox: event.hasMysteryBox ?? next.players[idx].hasMysteryBox,
         teleported: false
       };
       continue;
@@ -235,6 +240,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? current.escaped,
         fall: nextFall,
         hasKey: event.hasKey ?? current.hasKey,
+        hasMysteryBox: event.hasMysteryBox ?? current.hasMysteryBox,
         relocating: event.relocating ?? current.relocating,
         fallStartedAtMs,
         fallDurationMs,
@@ -259,8 +265,37 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         y: event.y,
         fall: event.fall ?? next.ghosts[idx].fall,
         hasKey: event.hasKey ?? next.ghosts[idx].hasKey,
+        hasMysteryBox: event.hasMysteryBox ?? next.ghosts[idx].hasMysteryBox,
         teleported: false
       };
+      continue;
+    }
+
+    if (event.type === 'ghost_added') {
+      const incoming = event.ghost;
+      const ghostId = Number(incoming?.id);
+      if (!Number.isFinite(ghostId)) continue;
+
+      const existingIdx = next.ghosts.findIndex((g) => g.id === ghostId);
+      const normalizedGhost = {
+        id: ghostId,
+        x: Number(incoming?.x) || 0,
+        y: Number(incoming?.y) || 0,
+        cx: Number(incoming?.x) || 0,
+        cy: Number(incoming?.y) || 0,
+        diameter: Number(incoming?.diameter) || 0.5,
+        fall: Boolean(incoming?.fall),
+        crazy: Boolean(incoming?.crazy),
+        teleported: false,
+        hasKey: Boolean(incoming?.hasKey),
+        hasMysteryBox: Boolean(incoming?.hasMysteryBox)
+      };
+
+      if (existingIdx >= 0) next.ghosts[existingIdx] = { ...next.ghosts[existingIdx], ...normalizedGhost };
+      else next.ghosts.push(normalizedGhost);
+
+      ghostIndexById.clear();
+      next.ghosts.forEach((g, i) => ghostIndexById.set(g.id, i));
       continue;
     }
 
@@ -281,6 +316,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         y: event.y ?? current.y,
         fall: nextFall,
         hasKey: event.hasKey ?? current.hasKey,
+        hasMysteryBox: event.hasMysteryBox ?? current.hasMysteryBox,
         fallStartedAtMs,
         fallDurationMs
       };
@@ -446,6 +482,48 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
       } else if (ownerType === 'ghost') {
         next.key = { type: 'ghost', ghostId: ownerId };
       }
+      continue;
+    }
+
+    if (event.type === 'mystery_box_dropped') {
+      next.mysteryBox = {
+        type: 'cell',
+        x: Math.round(Number(event.x) || 0),
+        y: Math.round(Number(event.y) || 0)
+      };
+      continue;
+    }
+
+    if (event.type === 'mystery_box_picked_up') {
+      const ownerType = String(event.by?.type || '');
+      const ownerId = Number(event.by?.id);
+      if (!Number.isFinite(ownerId)) {
+        next.mysteryBox = null;
+      } else if (ownerType === 'player') {
+        next.mysteryBox = { type: 'player', playerId: ownerId };
+      } else if (ownerType === 'ghost') {
+        next.mysteryBox = { type: 'ghost', ghostId: ownerId };
+      }
+      continue;
+    }
+
+    if (event.type === 'mystery_box_opened') {
+      console.log('[mystery-box] opened event', {
+        playerId: Number(event.playerId) || null,
+        outcome: String(event.outcome || ''),
+        hearts: Math.max(0, Number(event.hearts) || 0),
+        x: Math.round(Number(event.x) || 0),
+        y: Math.round(Number(event.y) || 0)
+      });
+      next.mysteryBox = null;
+      next.mysteryBoxLastOpen = {
+        seq: (Number(next.mysteryBoxLastOpen?.seq) || 0) + 1,
+        x: Math.round(Number(event.x) || 0),
+        y: Math.round(Number(event.y) || 0),
+        playerId: Number(event.playerId) || null,
+        outcome: String(event.outcome || ''),
+        hearts: Math.max(0, Number(event.hearts) || 0)
+      };
       continue;
     }
 
@@ -787,9 +865,12 @@ export default function App() {
     };
     const onGameAudio = (data) => {
       const soundKey = String(data?.key || '');
+      if (!soundKey) return;
       if (soundKey === SOUND.SCREAM || soundKey === SOUND.FALL_SCREAM) {
         soundManager.play(soundKey, { playbackRate: data?.playbackRate });
+        return;
       }
+      soundManager.play(soundKey);
     };
     const onRoomListUpdate = (data) => {
       setPublicRooms(Array.isArray(data?.rooms) ? data.rooms : []);
