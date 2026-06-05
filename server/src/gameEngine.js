@@ -1,4 +1,4 @@
-const PLAYER_COLORS = ['#ff00ff', '#00e5ff', '#ffe600', '#00ff66', '#ff7a00', '#8a5cff'];
+const PLAYER_COLORS = ['#ff00ff', '#00e5ff', '#ffe600', '#00ff66', '#ff7a00', '#8a5cff', '#ff4d6b', '#00cfaa'];
 import { SERVER_CONFIG } from './config.js';
 import { DEFAULT_MAZE_ALGORITHM, generateMaze, normalizeMazeAlgorithm } from './mazeAlgorithms.js';
 
@@ -16,6 +16,11 @@ function pickRandom(arr) {
 
 function isFiniteNumber(value) {
   return value != null && Number.isFinite(Number(value));
+}
+
+function normalizePlayerColor(color) {
+  if (typeof color !== 'string') return '';
+  return color.trim().toLowerCase();
 }
 
 function pickWeightedMazeAlgorithm() {
@@ -64,7 +69,7 @@ export class GameEngine {
     this.level = normalizeLevel(level);
     this.rows = rowsForLevel(this.level);
     this.cols = this.rows * 2;
-    this.maxPlayers = clamp(maxPlayers, 1, 6);
+    this.maxPlayers = clamp(maxPlayers, 1, 8);
     this.mazeAlgorithm = normalizeMazeAlgorithm(mazeAlgorithm || pickWeightedMazeAlgorithm());
 
     this.cells = [];
@@ -121,6 +126,7 @@ export class GameEngine {
       if (!slot) continue;
       slot.socketId = prevPlayer.socketId;
       slot.name = prevPlayer.name;
+      slot.color = prevPlayer.color;
     }
 
     room.engine = next;
@@ -340,8 +346,12 @@ export class GameEngine {
     return updates;
   }
 
-  attachPlayer(socketId, name) {
-    const slot = this.players.find((p) => !p.socketId);
+  attachPlayer(socketId, name, preferredColor = null) {
+    const normalizedColor = normalizePlayerColor(preferredColor);
+    const slotByColor = normalizedColor
+      ? this.players.find((p) => !p.socketId && normalizePlayerColor(p.color) === normalizedColor)
+      : null;
+    const slot = slotByColor || this.players.find((p) => !p.socketId);
     if (!slot) return null;
     slot.socketId = socketId;
     if (name && String(name).trim()) slot.name = String(name).trim().slice(0, 20);
@@ -356,6 +366,35 @@ export class GameEngine {
 
   getConnectedPlayers() {
     return this.players.filter((p) => p.socketId);
+  }
+
+  getAvailablePlayerColors() {
+    return this.players
+      .filter((p) => !p.socketId)
+      .map((p) => p.color);
+  }
+
+  setPlayerColor(targetPlayerId, color) {
+    const player = this.players.find((p) => p.id === targetPlayerId);
+    if (!player) return { error: 'Player not found.' };
+
+    const normalizedNew = normalizePlayerColor(color);
+    if (!normalizedNew) return { error: 'Invalid color.' };
+
+    if (normalizePlayerColor(player.color) === normalizedNew) return { ok: true };
+
+    const takenByOther = this.players.find(
+      (p) => p.id !== targetPlayerId && p.socketId && normalizePlayerColor(p.color) === normalizedNew
+    );
+    if (takenByOther) return { error: 'Color is already taken by another player.' };
+
+    const targetSlot = this.players.find((p) => normalizePlayerColor(p.color) === normalizedNew);
+    if (!targetSlot) return { error: 'Color not found.' };
+
+    const oldColor = player.color;
+    player.color = targetSlot.color;
+    targetSlot.color = oldColor;
+    return { ok: true };
   }
 
   isEmptyRoom() {
@@ -1796,6 +1835,7 @@ export class GameEngine {
       cols: this.cols,
       maxPlayers: this.maxPlayers,
       connected: players.filter((p) => p.connected).length,
+      availableColors: this.getAvailablePlayerColors(),
       players
     };
   }

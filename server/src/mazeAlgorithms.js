@@ -239,7 +239,7 @@ function generateDfsBacktracker(cells, cols, getCell) {
   }
 
   // Light braiding pass keeps DFS style while reducing a small portion of dead ends.
-  braidDeadEnds(cells, cols, getCell, 0.06);
+  braidDeadEnds(cells, cols, getCell, 0.1);
 }
 
 // Braiding: for each dead-end cell (only one open passage), remove one additional

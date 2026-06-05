@@ -99,10 +99,10 @@ export const SERVER_CONFIG = {
   },
   mazeAlgorithm: {
     weightedBias: [
-      { id: 'prim', weight: 3 },
+      { id: 'prim', weight: 5 },
       { id: 'dfs', weight: 2 },
       { id: 'growingtree', weight: 2 },
-      { id: 'subdivspiral', weight: 1 },
+      { id: 'subdivspiral', weight: 2 },
       { id: 'backbite', weight: 0 }
       // Higher weight = more likely. Comment out an entry to remove it from the random pool.
     ]

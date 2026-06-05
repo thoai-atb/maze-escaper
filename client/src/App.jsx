@@ -28,6 +28,11 @@ function mazeAlgorithmLabel(value) {
   return MAZE_ALGORITHM_OPTIONS.find((option) => option.value === value)?.label || 'Randomized Prim';
 }
 
+function normalizePlayerColor(color) {
+  if (typeof color !== 'string') return '';
+  return color.trim().toLowerCase();
+}
+
 function getViewportSize() {
   const visual = window.visualViewport;
   if (visual) {
@@ -670,6 +675,8 @@ export default function App() {
     const saved = window.localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
     return saved ? saved.slice(0, 20) : '';
   });
+  const [myPlayerId, setMyPlayerId] = useState(0);
+  const [colorDropdownOpen, setColorDropdownOpen] = useState(null); // stores player id of open dropdown
   const [roomCodeInput, setRoomCodeInput] = useState('');
 
   const [roomCode, setRoomCode] = useState('');
@@ -712,6 +719,7 @@ export default function App() {
   const poweredOffGadgetTilesRef = useRef(new Set());
   const levelActionRef = useRef({ enabled: false, mode: 'restart' });
   const showResultsRef = useRef(false);
+  const colorDropdownRef = useRef(null);
 
   useEffect(() => {
     mySocketIdRef.current = mySocketId;
@@ -983,6 +991,8 @@ export default function App() {
       setShowResults(false);
       setInputState(initialInput);
       setError('');
+      setMyPlayerId(0);
+      setColorDropdownOpen(null);
       clearTrapCloseTimers();
       predictedTrapsRef.current.clear();
       pendingMovesRef.current.length = 0;
@@ -1295,6 +1305,17 @@ export default function App() {
   }, [myName]);
 
   useEffect(() => {
+    if (colorDropdownOpen === null) return;
+    const handler = (e) => {
+      if (colorDropdownRef.current && !colorDropdownRef.current.contains(e.target)) {
+        setColorDropdownOpen(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [colorDropdownOpen]);
+
+  useEffect(() => {
     if (!started || !snapshot) {
       prevSnapshotRef.current = null;
       prevMapGadgetRef.current = false;
@@ -1406,6 +1427,7 @@ export default function App() {
           return;
         }
         setRoomCode(res.roomCode);
+        if (res.playerId) setMyPlayerId(res.playerId);
       }
     );
   };
@@ -1429,6 +1451,7 @@ export default function App() {
           return;
         }
         setRoomCode(res.roomCode);
+        if (res.playerId) setMyPlayerId(res.playerId);
       }
     );
   };
@@ -1452,8 +1475,18 @@ export default function App() {
           return;
         }
         setRoomCode(res.roomCode);
+        if (res.playerId) setMyPlayerId(res.playerId);
       }
     );
+  };
+
+  const handleColorChange = (targetPlayerId, color) => {
+    setColorDropdownOpen(null);
+    socket.emit('player:set-color', { playerId: targetPlayerId, color }, (res) => {
+      if (!res?.ok) {
+        setError(res?.error || 'Unable to change color.');
+      }
+    });
   };
 
   const startRoom = () => {
@@ -1747,7 +1780,7 @@ export default function App() {
               <h2>Create Room</h2>
               <p>Level starts from 1 and increases if at least one player escapes.</p>
               <p>Maze generation algorithm is randomized by the server.</p>
-              <p>6 players maximum.</p>
+              <p>8 players maximum.</p>
               <button onClick={createRoom} disabled={!hasValidName}>Create</button>
             </article>
 
@@ -1779,7 +1812,7 @@ export default function App() {
                       <div>
                         <div className="room-browser-code">{r.roomCode}</div>
                         <div className="room-browser-meta">
-                          {r.hostName || 'Host'} - Players {r.connectedPlayers}/{r.maxPlayers} - {mazeAlgorithmLabel(r.mazeAlgorithm)}
+                          {r.hostName || 'Host'} - Players {r.connectedPlayers}/{r.maxPlayers}
                         </div>
                       </div>
                       <button className="join tiny-join" onClick={() => joinRoomByCode(r.roomCode)} disabled={!hasValidName}>
@@ -1818,14 +1851,48 @@ export default function App() {
           <div className="status-grid">
             <div className="status-card">
               <h3>Players</h3>
-              {roomStatus?.players?.filter((p) => p.connected)?.map((p) => (
-                <div key={p.id} className="player-row">
-                  <span className="dot" style={{ backgroundColor: p.color }} />
-                  <span>{p.name}</span>
-                  <span className="player-rtt">{formatRtt(p.rttMs) || '--'}</span>
-                  {started && <span>{p.escaped ? 'Escaped' : p.dead ? 'Wasted' : 'Alive'}</span>}
-                </div>
-              ))}
+              {roomStatus?.players?.filter((p) => p.connected)?.map((p) => {
+                const isOpen = colorDropdownOpen === p.id;
+                const dropdownColors = [
+                  p.color,
+                  ...(roomStatus.availableColors || [])
+                ];
+                return (
+                  <div key={p.id} className="player-row">
+                    <span
+                      className="color-cell"
+                      ref={isOpen ? colorDropdownRef : null}
+                    >
+                      <span className="dot" style={{ backgroundColor: p.color }} />
+                      <button
+                        className="color-select-btn"
+                        onClick={() => setColorDropdownOpen((prev) => prev === p.id ? null : p.id)}
+                        aria-label="Change color"
+                        title="Change color"
+                      >
+                        &#9660;
+                      </button>
+                      {isOpen && (
+                        <div className="color-dropdown">
+                          {dropdownColors.map((color) => (
+                            <button
+                              key={color}
+                              className={`color-option${normalizePlayerColor(p.color) === normalizePlayerColor(color) ? ' selected' : ''}`}
+                              style={{ background: color }}
+                              onClick={() => handleColorChange(p.id, color)}
+                              aria-label={`Select color ${color}`}
+                              title={color}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </span>
+                    <span>{p.name}</span>
+                    <span className="player-rtt">{formatRtt(p.rttMs) || '--'}</span>
+                    {started && <span>{p.escaped ? 'Escaped' : p.dead ? 'Wasted' : 'Alive'}</span>}
+                  </div>
+                );
+              })}
             </div>
 
             <div className="status-card">

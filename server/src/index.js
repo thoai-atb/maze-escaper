@@ -39,7 +39,12 @@ const rttBySocket = new Map();
 const INPUT_QUEUE_MAX = 24;
 const VALID_INPUT_ACTIONS = new Set(['up', 'down', 'left', 'right', 'trap']);
 const INITIAL_LIVES = 3;
-const FIXED_MAX_PLAYERS = 6;
+const FIXED_MAX_PLAYERS = 8;
+
+function normalizePlayerColor(color) {
+  if (typeof color !== 'string') return '';
+  return color.trim().toLowerCase();
+}
 
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
@@ -727,7 +732,6 @@ function getPublicRoomList() {
       hostSocketId: room.hostSocketId,
       hostName: hostPlayer?.name || 'Host',
       level: room.engine.level,
-      mazeAlgorithm: room.engine.mazeAlgorithm,
       rows: room.engine.rows,
       cols: room.engine.cols,
       maxPlayers: room.engine.maxPlayers,
@@ -806,7 +810,7 @@ function getLevelResults(room) {
   return levelHistory;
 }
 
-function createRoom({ hostSocketId, hostName }) {
+function createRoom({ hostSocketId, hostName, hostColor }) {
   const roomCode = nanoid();
   const engine = new GameEngine({
     level: 1,
@@ -833,7 +837,7 @@ function createRoom({ hostSocketId, hostName }) {
     lastUiState: null
   };
 
-  const attached = engine.attachPlayer(hostSocketId, hostName || 'Host');
+  const attached = engine.attachPlayer(hostSocketId, hostName || 'Host', hostColor);
   if (!attached) return null;
 
   rooms.set(roomCode, room);
@@ -841,7 +845,7 @@ function createRoom({ hostSocketId, hostName }) {
   return room;
 }
 
-function joinRoom({ socketId, roomCode, playerName }) {
+function joinRoom({ socketId, roomCode, playerName, playerColor }) {
   const room = rooms.get(roomCode);
   if (!room) {
     return { error: 'Room not found.' };
@@ -851,7 +855,17 @@ function joinRoom({ socketId, roomCode, playerName }) {
     return { error: 'Game already started in this room.' };
   }
 
-  const slot = room.engine.attachPlayer(socketId, playerName || 'Player');
+  const normalizedSelectedColor = normalizePlayerColor(playerColor);
+  if (normalizedSelectedColor) {
+    const availableColors = room.engine
+      .getAvailablePlayerColors()
+      .map((color) => normalizePlayerColor(color));
+    if (!availableColors.includes(normalizedSelectedColor)) {
+      return { error: 'Selected color is no longer available. Please choose another color.' };
+    }
+  }
+
+  const slot = room.engine.attachPlayer(socketId, playerName || 'Player', normalizedSelectedColor || null);
   if (!slot) {
     return { error: 'Room is full.' };
   }
@@ -955,7 +969,8 @@ io.on('connection', (socket) => {
 
       const room = createRoom({
         hostSocketId: socket.id,
-        hostName: payload?.name || 'Host'
+        hostName: payload?.name || 'Host',
+        hostColor: payload?.color || null
       });
 
       if (!room) {
@@ -966,7 +981,8 @@ io.on('connection', (socket) => {
       socket.join(room.roomCode);
       emitRoomUpdate(room.roomCode);
       emitRoomList();
-      cb?.({ ok: true, roomCode: room.roomCode });
+      const hostPlayer = room.engine.players.find((p) => p.socketId === socket.id);
+      cb?.({ ok: true, roomCode: room.roomCode, playerId: hostPlayer?.id ?? null });
     } catch (err) {
       cb?.({ ok: false, error: 'Unexpected error creating room.' });
     }
@@ -979,7 +995,8 @@ io.on('connection', (socket) => {
       const result = joinRoom({
         socketId: socket.id,
         roomCode,
-        playerName: payload?.name || 'Player'
+        playerName: payload?.name || 'Player',
+        playerColor: payload?.color || null
       });
 
       if (result.error) {
@@ -990,7 +1007,8 @@ io.on('connection', (socket) => {
       socket.join(roomCode);
       emitRoomUpdate(roomCode);
       emitRoomList();
-      cb?.({ ok: true, roomCode });
+      const joinedPlayer = result.room.engine.players.find((p) => p.socketId === socket.id);
+      cb?.({ ok: true, roomCode, playerId: joinedPlayer?.id ?? null });
     } catch (err) {
       cb?.({ ok: false, error: 'Unexpected error joining room.' });
     }
@@ -1019,6 +1037,9 @@ io.on('connection', (socket) => {
       cb?.({ ok: false, error: 'Need at least one player.' });
       return;
     }
+
+    // Rebuild the round engine at start so maze algorithm is decided at start time.
+    GameEngine.fromExistingRoom(room, { advanceLevel: false });
 
     room.resultPlayerIds = room.engine.getConnectedPlayers().map((player) => player.id);
     room.remainingLives = INITIAL_LIVES;
@@ -1146,6 +1167,29 @@ io.on('connection', (socket) => {
     emitRoomUpdate(roomCode);
     emitRoomList();
     cb?.({ ok: true });
+  });
+
+  socket.on('player:set-color', (payload, cb) => {
+    try {
+      const roomCode = socketRoom.get(socket.id);
+      if (!roomCode) { cb?.({ ok: false, error: 'Not in a room.' }); return; }
+
+      const room = rooms.get(roomCode);
+      if (!room) { cb?.({ ok: false, error: 'Room not found.' }); return; }
+
+      if (room.started) { cb?.({ ok: false, error: 'Cannot change color after game has started.' }); return; }
+
+      const targetPlayerId = Number(payload?.playerId);
+      if (!Number.isFinite(targetPlayerId)) { cb?.({ ok: false, error: 'Invalid player id.' }); return; }
+
+      const result = room.engine.setPlayerColor(targetPlayerId, payload?.color);
+      if (result.error) { cb?.({ ok: false, error: result.error }); return; }
+
+      emitRoomUpdate(roomCode);
+      cb?.({ ok: true });
+    } catch (err) {
+      cb?.({ ok: false, error: 'Unexpected error changing color.' });
+    }
   });
 
   socket.on('room:leave', (cb) => {
