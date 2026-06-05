@@ -1549,6 +1549,15 @@ export default function App() {
   const roomRows = roomStatus?.rows || 0;
   const roomCols = roomStatus?.cols || roomRows * 2;
   const connectedRoundPlayers = (snapshot?.players || []).filter((p) => p.socketId).length;
+  const useCompactRoundPlayerPills = connectedPlayers.length > 4;
+  const isCurrentPlayer = (player) => (
+    (Boolean(player.socketId) && Boolean(mySocketId) && player.socketId === mySocketId)
+    || (Boolean(myPlayerId) && player.id === myPlayerId)
+  );
+  const orderedConnectedPlayers = [
+    ...connectedPlayers.filter((p) => isCurrentPlayer(p)),
+    ...connectedPlayers.filter((p) => !isCurrentPlayer(p))
+  ];
   const roundFinishPlayers = (snapshot?.players || []).filter((p) => p.socketId);
   const highestLevelReached = Math.max(displayLevel, ...levelHistory.map((entry) => entry.level));
   const maxLevelResult = levelHistory.find((entry) => entry.level === configuredMaxLevel);
@@ -1608,10 +1617,17 @@ export default function App() {
             <span className="round-right">
               <span className="round-right-info">
                 <span className="round-players">
-                  {connectedPlayers.map((p) => (
-                    <span key={p.id} className="round-player-pill">
+                  {orderedConnectedPlayers.map((p) => (
+                    <span
+                      key={p.id}
+                      className={`round-player-pill${useCompactRoundPlayerPills ? ' compact' : ''}`}
+                      title={isCurrentPlayer(p) ? `${p.name} (You)` : p.name}
+                      aria-label={isCurrentPlayer(p) ? `${p.name} (You)` : p.name}
+                    >
                       <span className="dot" style={{ backgroundColor: p.color }} />
-                      <span>{p.name}</span>
+                      {(!useCompactRoundPlayerPills || isCurrentPlayer(p)) && (
+                        <span className={`round-player-name${isCurrentPlayer(p) ? ' is-self' : ''}`}>{p.name}</span>
+                      )}
                       {formatRtt(p.rttMs) && <span className="round-player-rtt">{formatRtt(p.rttMs)}</span>}
                     </span>
                   ))}

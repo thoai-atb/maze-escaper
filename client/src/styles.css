@@ -588,6 +588,26 @@ button.leave-room {
   gap: 6px;
 }
 
+.round-player-name.is-self {
+  color: #f2c200;
+}
+
+.round-player-pill.compact {
+  gap: 0;
+}
+
+.round-player-pill.compact .dot {
+  margin-right: 0;
+}
+
+.round-player-pill.compact .round-player-name {
+  margin-left: 6px;
+}
+
+.round-player-pill.compact .round-player-rtt {
+  margin-left: 6px;
+}
+
 .round-player-rtt {
   font-size: 0.68rem;
   color: rgba(151, 214, 255, 0.86);
@@ -981,6 +1001,8 @@ button.leave-room {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-auto-rows: 1fr;
   gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -989,8 +1011,11 @@ button.leave-room {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .results-level-header {
@@ -1039,6 +1064,18 @@ button.leave-room {
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.results-players::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .results-no-data {

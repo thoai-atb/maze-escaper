@@ -1,4 +1,4 @@
-import { TILE_COLOR_CONFIG, getTileThemeByLevel } from '../config';
+import { TILE_COLOR_CONFIG, WALL_RENDER_CONFIG, getTileThemeByLevel, getWallThemeByLevel } from '../config';
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -15,14 +15,16 @@ const WALL_TONE = {
   max: 50, // Brightest allowed wall lightness (%).
   scale: 0.5 // Multiplier from cell/wall brightness to wall lightness.
 };
+const WALL_BORDER_PX = Math.max(0, Number(WALL_RENDER_CONFIG.borderThicknessPx) || 0);
+const WALL_BORDER_COLOR = '#252525';
 
 function wallTone(brightness) {
   return Math.max(WALL_TONE.min, Math.min(WALL_TONE.max, brightness * WALL_TONE.scale));
 }
 
-function wallColor(tone, forceBlack = false) {
-  if (forceBlack) return 'hsl(0 0% 0%)';
-  return `hsl(0 0% ${tone}%)`;
+function wallColor(tone, level) {
+  const wallTheme = getWallThemeByLevel(level);
+  return `hsl(${Math.round(wallTheme.hue)} ${Math.round(wallTheme.saturation)}% ${tone}%)`;
 }
 
 // 3x3 burn grid — parts 0-8 burn left-to-right, top-to-bottom (rank === part index)
@@ -215,7 +217,7 @@ function drawCellGlyph(ctx, cell, x, y, unit, stroke, glyphColor = '#111') {
   }
 }
 
-function drawWallColumns(ctx, snapshot, unit, stroke) {
+function collectWallColumns(snapshot) {
   const pointMap = new Map();
 
   function addPoint(x, y, tone) {
@@ -274,13 +276,56 @@ function drawWallColumns(ctx, snapshot, unit, stroke) {
     }
   }
 
-  const radius = Math.max(0.8, stroke / 2);
-  for (const p of pointMap.values()) {
-    ctx.fillStyle = wallColor(p.tone, snapshot.finish);
-    ctx.beginPath();
-    ctx.arc(p.x * unit, p.y * unit, radius, 0, Math.PI * 2);
-    ctx.fill();
+  return [...pointMap.values()];
+}
+
+function collectWallSegments(snapshot) {
+  const segments = [];
+  const { rows, cols } = snapshot;
+
+  for (const wall of snapshot.walls) {
+    if (!wall.enable || !wall.visible) continue;
+    if (wall.bright <= snapshot.minBright && !snapshot.finish) continue;
+    segments.push({
+      x1: wall.p1.x,
+      y1: wall.p1.y,
+      x2: wall.p2.x,
+      y2: wall.p2.y,
+      tone: wallTone(wall.bright)
+    });
   }
+
+  // Outer border walls; keep only the right-side exit row segment open.
+  for (let x = 0; x < cols; x++) {
+    const topCell = snapshot.cells[x];
+    if (snapshot.finish || (topCell?.inSight && topCell.bright > snapshot.minBright)) {
+      segments.push({ x1: x, y1: 0, x2: x + 1, y2: 0, tone: wallTone(topCell?.bright ?? 0) });
+    }
+
+    const bottomCell = snapshot.cells[(rows - 1) * cols + x];
+    if (snapshot.finish || (bottomCell?.inSight && bottomCell.bright > snapshot.minBright)) {
+      segments.push({ x1: x, y1: rows, x2: x + 1, y2: rows, tone: wallTone(bottomCell?.bright ?? 0) });
+    }
+  }
+
+  for (let y = 0; y < rows; y++) {
+    const leftCell = snapshot.cells[y * cols];
+    if (snapshot.finish || (leftCell?.inSight && leftCell.bright > snapshot.minBright)) {
+      segments.push({ x1: 0, y1: y, x2: 0, y2: y + 1, tone: wallTone(leftCell?.bright ?? 0) });
+    }
+  }
+
+  for (let y = 0; y < rows; y++) {
+    if (snapshot.exit && snapshot.exit.y === y) continue;
+    const edgeCell = snapshot.cells[y * cols + (cols - 1)];
+    if (!snapshot.finish) {
+      if (!edgeCell?.inSight) continue;
+      if (edgeCell.bright <= snapshot.minBright) continue;
+    }
+    segments.push({ x1: cols, y1: y, x2: cols, y2: y + 1, tone: wallTone(edgeCell?.bright ?? 0) });
+  }
+
+  return segments;
 }
 
 function drawMapOverlay(ctx, snapshot, unit, stroke) {
@@ -596,88 +641,48 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     drawCellGlyph(ctx, cell, x, y, unit, stroke);
   }
 
-  for (const wall of snapshot.walls) {
-    if (!wall.enable || !wall.visible) continue;
-    if (wall.bright <= snapshot.minBright && !snapshot.finish) continue;
-    const tone = wallTone(wall.bright);
+  const wallSegments = collectWallSegments(snapshot);
+  const wallColumns = collectWallColumns(snapshot);
+
+  for (const segment of wallSegments) {
     strokeLine(
       ctx,
-      wall.p1.x * unit,
-      wall.p1.y * unit,
-      wall.p2.x * unit,
-      wall.p2.y * unit,
-      wallColor(tone, snapshot.finish),
+      segment.x1 * unit,
+      segment.y1 * unit,
+      segment.x2 * unit,
+      segment.y2 * unit,
+      WALL_BORDER_COLOR,
+      stroke + WALL_BORDER_PX
+    );
+  }
+
+  const wallColumnRadius = stroke / 2;
+  const wallBorderColumnRadius = (stroke + WALL_BORDER_PX) / 2;
+  for (const point of wallColumns) {
+    ctx.fillStyle = WALL_BORDER_COLOR;
+    ctx.beginPath();
+    ctx.arc(point.x * unit, point.y * unit, wallBorderColumnRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const segment of wallSegments) {
+    strokeLine(
+      ctx,
+      segment.x1 * unit,
+      segment.y1 * unit,
+      segment.x2 * unit,
+      segment.y2 * unit,
+      wallColor(segment.tone, snapshot.level),
       stroke
     );
   }
 
-  // Draw outer border walls; keep only the right-side exit row segment open.
-  for (let x = 0; x < cols; x++) {
-    const topCell = snapshot.cells[x];
-    if (snapshot.finish || (topCell?.inSight && topCell.bright > snapshot.minBright)) {
-      const tone = wallTone(topCell?.bright ?? 0);
-      strokeLine(
-        ctx,
-        x * unit,
-        0,
-        (x + 1) * unit,
-        0,
-        wallColor(tone, snapshot.finish),
-        stroke
-      );
-    }
-
-    const bottomCell = snapshot.cells[(rows - 1) * cols + x];
-    if (snapshot.finish || (bottomCell?.inSight && bottomCell.bright > snapshot.minBright)) {
-      const tone = wallTone(bottomCell?.bright ?? 0);
-      strokeLine(
-        ctx,
-        x * unit,
-        rows * unit,
-        (x + 1) * unit,
-        rows * unit,
-        wallColor(tone, snapshot.finish),
-        stroke
-      );
-    }
+  for (const point of wallColumns) {
+    ctx.fillStyle = wallColor(point.tone, snapshot.level);
+    ctx.beginPath();
+    ctx.arc(point.x * unit, point.y * unit, wallColumnRadius, 0, Math.PI * 2);
+    ctx.fill();
   }
-
-  for (let y = 0; y < rows; y++) {
-    const leftCell = snapshot.cells[y * cols];
-    if (snapshot.finish || (leftCell?.inSight && leftCell.bright > snapshot.minBright)) {
-      const tone = wallTone(leftCell?.bright ?? 0);
-      strokeLine(
-        ctx,
-        0,
-        y * unit,
-        0,
-        (y + 1) * unit,
-        wallColor(tone, snapshot.finish),
-        stroke
-      );
-    }
-  }
-
-  for (let y = 0; y < rows; y++) {
-    if (snapshot.exit && snapshot.exit.y === y) continue;
-    const edgeCell = snapshot.cells[y * cols + (cols - 1)];
-    if (!snapshot.finish) {
-      if (!edgeCell?.inSight) continue;
-      if (edgeCell.bright <= snapshot.minBright) continue;
-    }
-    const tone = wallTone(edgeCell?.bright ?? 0);
-    strokeLine(
-      ctx,
-      cols * unit,
-      y * unit,
-      cols * unit,
-      (y + 1) * unit,
-      wallColor(tone, snapshot.finish),
-      stroke
-    );
-  }
-
-  drawWallColumns(ctx, snapshot, unit, stroke);
 
   if (mapActive) {
     drawMapOverlay(ctx, snapshot, unit, stroke);
