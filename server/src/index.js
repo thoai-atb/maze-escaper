@@ -205,7 +205,8 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       teleported: Boolean(p.teleported),
       diameter: p.diameter,
       hasKey: p.hasKey,
-      hasShield: Boolean(p.hasShield),
+      shieldCount: Math.max(0, Number(p.shieldCount) || 0),
+      hasShield: (Number(p.shieldCount) || 0) > 0,
       hasMysteryBox: p.hasMysteryBox,
       relocating: Boolean(p.pendingRelocate)
     })),
@@ -352,7 +353,8 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         escaped: player.escaped,
         fall: player.fall,
         hasKey: player.hasKey,
-        hasShield: Boolean(player.hasShield)
+        shieldCount: Math.max(0, Number(player.shieldCount) || 0),
+        hasShield: (Number(player.shieldCount) || 0) > 0
       });
 
       if (Number(prevPlayer.dead) === 1 && Number(player.dead) === 1) {
@@ -387,7 +389,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       || playerFallTransition
       || shouldEmitPlayerDiameter
       || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
-      || Boolean(prevPlayer.hasShield) !== Boolean(player.hasShield)
+      || (Math.max(0, Number(prevPlayer.shieldCount) || 0) !== Math.max(0, Number(player.shieldCount) || 0))
       || Boolean(prevPlayer.hasMysteryBox) !== Boolean(player.hasMysteryBox)
       || Boolean(prevPlayer.relocating) !== Boolean(player.relocating)
       || prevPlayer.socketId !== player.socketId
@@ -401,7 +403,8 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         escaped: player.escaped,
         fall: player.fall,
         hasKey: player.hasKey,
-        hasShield: Boolean(player.hasShield),
+        shieldCount: Math.max(0, Number(player.shieldCount) || 0),
+        hasShield: (Number(player.shieldCount) || 0) > 0,
         hasMysteryBox: player.hasMysteryBox,
         socketId: player.socketId,
         relocating: Boolean(player.relocating),

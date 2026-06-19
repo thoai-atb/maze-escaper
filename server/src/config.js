@@ -87,24 +87,24 @@ export const SERVER_CONFIG = {
   mysteryBox: {
     respawnMs: 5000, // Delay before a consumed mystery box respawns on the board.
     outcomes: [
-      { id: 'spawn_portal', weight: 1 },
-      { id: 'spawn_crazy', weight: 1 },
-      { id: 'add_life', weight: 4 },
+      { id: 'spawn_portal', weight: 10 },
+      { id: 'spawn_crazy', weight: 5 },
+      { id: 'add_life', weight: 30 },
       { id: 'add_shield', weight: 100 },
-      { id: 'spawn_map_tile', weight: 2 },
-      { id: 'spawn_radar_tile', weight: 2 },
-      { id: 'give_key', weight: 1 },
-      { id: 'swap_player', weight: 1 }
+      { id: 'spawn_map_tile', weight: 30 },
+      { id: 'spawn_radar_tile', weight: 30 },
+      { id: 'give_key', weight: 10 },
+      { id: 'swap_player', weight: 20 }
       // Set weight higher to make an outcome more likely, or 0 to disable it.
     ]
   },
   mazeAlgorithm: {
     weightedBias: [
-      { id: 'prim', weight: 5 },
-      { id: 'dfs', weight: 2 },
-      { id: 'growingtree', weight: 2 },
-      { id: 'subdivspiral', weight: 2 },
-      { id: 'backbite', weight: 0 }
+      { id: 'prim', weight: 60 },
+      { id: 'dfs', weight: 10 },
+      { id: 'growingtree', weight: 20 },
+      { id: 'subdivspiral', weight: 10 },
+      { id: 'backbite', weight: 1 }
       // Higher weight = more likely. Comment out an entry to remove it from the random pool.
     ]
   },

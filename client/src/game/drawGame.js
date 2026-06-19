@@ -132,7 +132,7 @@ function drawMysteryBox(ctx, x, y, unit, scale = 1) {
   const bandW = Math.max(1.5, size * 0.18);
   roundedRectPath(ctx, left + (size - bandW) / 2, top + size * 0.02, bandW, size * 0.96, Math.max(0.8, radius * 0.4));
   ctx.fill();
-  roundedRectPath(ctx, left + size * 0.02, top + size * 0.44, size * 0.96, Math.max(1.5, size * 0.12), Math.max(0.8, radius * 0.35));
+  roundedRectPath(ctx, left + size * 0.02, top + (size - bandW) / 2, size * 0.96, bandW, Math.max(0.8, radius * 0.35));
   ctx.fill();
   ctx.restore();
 }
@@ -143,13 +143,15 @@ function drawShieldAura(ctx, player, unit, stroke, animationTimeMs) {
   const cx = (player.cx + 0.5) * unit;
   const cy = (player.cy + 0.5) * unit;
   const isDead = Number(player.dead) > 0;
+  const shieldCount = Math.max(0, Number(player.shieldCount) || (player.hasShield ? 1 : 0));
+  if (shieldCount <= 0) return;
   const orbitRadius = unit * 0.38 * (Number(player.diameter) || 0.5) * 2;
   const dotRadius = Math.max(1.8, unit * 0.06 * (Number(player.diameter) || 0.5) * 2);
   const freezeOrbit = isDead || Boolean(player.fall);
   const playerKey = Number(player.id);
   const nowMs = Number(animationTimeMs) || 0;
   const baseAngle = (player.id * 0.65 + player.x * 0.2 + player.y * 0.13) % (Math.PI * 2);
-  const angleStep = (Math.PI * 2) / 3;
+  const angleStep = (Math.PI * 2) / Math.max(1, shieldCount);
   const orbitSpeedPerMs = 0.0048;
   const trailLength = 32;
 
@@ -158,25 +160,20 @@ function drawShieldAura(ctx, player, unit, stroke, animationTimeMs) {
     state = {
       phase: 0,
       lastMs: nowMs,
-      dots: [
-        {
-          x: cx,
-          y: cy,
-          history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
-        },
-        {
-          x: cx,
-          y: cy,
-          history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
-        },
-        {
-          x: cx,
-          y: cy,
-          history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
-        }
-      ]
+      dots: []
     };
     SHIELD_DOTS_BY_PLAYER.set(playerKey, state);
+  }
+
+  while (state.dots.length < shieldCount) {
+    state.dots.push({
+      x: cx,
+      y: cy,
+      history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
+    });
+  }
+  if (state.dots.length > shieldCount) {
+    state.dots.length = shieldCount;
   }
 
   let dtMs = nowMs - Number(state.lastMs);
@@ -189,7 +186,7 @@ function drawShieldAura(ctx, player, unit, stroke, animationTimeMs) {
 
   const lerpT = 1 - Math.exp(-0.018 * dtMs);
   const baseColor = player.color || '#78ebff';
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < shieldCount; i += 1) {
     const angle = baseAngle + state.phase + i * angleStep;
     const tx = cx + Math.cos(angle) * orbitRadius;
     const ty = cy + Math.sin(angle) * orbitRadius;
@@ -925,7 +922,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
 
   const activeShieldPlayerIds = new Set(
     (snapshot.players || [])
-      .filter((p) => p.socketId && p.hasShield && Number(p.dead) !== 2)
+      .filter((p) => p.socketId && (Math.max(0, Number(p.shieldCount) || (p.hasShield ? 1 : 0)) > 0) && Number(p.dead) !== 2)
       .map((p) => Number(p.id))
   );
   for (const key of SHIELD_DOTS_BY_PLAYER.keys()) {
@@ -950,7 +947,7 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     ctx.fill();
     ctx.stroke();
 
-    if (player.hasShield) {
+    if ((Math.max(0, Number(player.shieldCount) || (player.hasShield ? 1 : 0))) > 0) {
       drawShieldAura(ctx, player, unit, stroke, animationTimeMs);
     }
 

@@ -203,7 +203,12 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? next.players[idx].escaped,
         fall: event.fall ?? next.players[idx].fall,
         hasKey: event.hasKey ?? next.players[idx].hasKey,
-        hasShield: event.hasShield ?? next.players[idx].hasShield,
+        shieldCount: event.shieldCount
+          ?? next.players[idx].shieldCount
+          ?? ((event.hasShield ?? next.players[idx].hasShield) ? 1 : 0),
+        hasShield: (event.shieldCount ?? next.players[idx].shieldCount) != null
+          ? Number(event.shieldCount ?? next.players[idx].shieldCount) > 0
+          : (event.hasShield ?? next.players[idx].hasShield),
         hasMysteryBox: event.hasMysteryBox ?? next.players[idx].hasMysteryBox,
         teleported: false
       };
@@ -246,7 +251,12 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? current.escaped,
         fall: nextFall,
         hasKey: event.hasKey ?? current.hasKey,
-        hasShield: event.hasShield ?? current.hasShield,
+        shieldCount: event.shieldCount
+          ?? current.shieldCount
+          ?? ((event.hasShield ?? current.hasShield) ? 1 : 0),
+        hasShield: (event.shieldCount ?? current.shieldCount) != null
+          ? Number(event.shieldCount ?? current.shieldCount) > 0
+          : (event.hasShield ?? current.hasShield),
         hasMysteryBox: event.hasMysteryBox ?? current.hasMysteryBox,
         socketId: Object.prototype.hasOwnProperty.call(event, 'socketId') ? event.socketId : current.socketId,
         relocating: event.relocating ?? current.relocating,
@@ -1336,8 +1346,7 @@ export default function App() {
 
         if (!prevPlayer.hasKey && player.hasKey) soundManager.play(SOUND.KEY);
         if (
-          prevPlayer.hasShield
-          && !player.hasShield
+          (Number(prevPlayer.shieldCount) || 0) > (Number(player.shieldCount) || 0)
           && Number(player.dead) === 0
           && !Boolean(player.fall)
         ) {

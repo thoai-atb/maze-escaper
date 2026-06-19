@@ -272,7 +272,7 @@ export class GameEngine {
         reviveStartedAt: 0,
         lastMoveAt: 0,
         trapCooldownAt: 0,
-        hasShield: false,
+        shieldCount: 0,
         ghostKillsRound: 0,
         teleported: false,
         pendingRelocate: null
@@ -642,8 +642,8 @@ export class GameEngine {
         if (player.dead || player.escaped) continue;
         if (this.cheatEnabled) continue;
         if (player.x === ghost.x && player.y === ghost.y) { // Easier to die, not checking cx, cy
-          if (player.hasShield) {
-            player.hasShield = false;
+          if ((Number(player.shieldCount) || 0) > 0) {
+            player.shieldCount = Math.max(0, (Number(player.shieldCount) || 0) - 1);
             ghost.killedByPlayerId = player.id;
             ghost.fall = true;
             ghost.x = player.x;
@@ -1146,10 +1146,6 @@ export class GameEngine {
       availableOutcomes = availableOutcomes.filter((entry) => entry.id !== 'swap_player');
     }
 
-    if (player.hasShield) {
-      availableOutcomes = availableOutcomes.filter((entry) => entry.id !== 'add_shield');
-    }
-
     const outcome = pickWeightedId(availableOutcomes) || 'add_life';
     const result = {
       seq: this.mysteryBoxOpenSeq + 1,
@@ -1174,7 +1170,7 @@ export class GameEngine {
     } else if (outcome === 'give_key') {
       this.keyOwner = { type: 'player', playerId: player.id };
     } else if (outcome === 'add_shield') {
-      player.hasShield = true;
+      player.shieldCount = (Number(player.shieldCount) || 0) + 1;
     } else if (outcome === 'swap_player') {
       this._swapPlayerFromMysteryBox(player);
     }
@@ -1776,7 +1772,8 @@ export class GameEngine {
         ghostKills: Number(p.ghostKillsRound) || 0,
         diameter: p.diameter,
         teleported: Boolean(p.teleported),
-        hasShield: Boolean(p.hasShield),
+        shieldCount: Math.max(0, Number(p.shieldCount) || 0),
+        hasShield: (Number(p.shieldCount) || 0) > 0,
         hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id,
         hasMysteryBox: this.mysteryBoxOwner?.type === 'player' && this.mysteryBoxOwner.playerId === p.id,
         pendingRelocate: p.pendingRelocate ?? null
