@@ -205,6 +205,7 @@ function buildDynamicSnapshot(room, fullSnapshot) {
       teleported: Boolean(p.teleported),
       diameter: p.diameter,
       hasKey: p.hasKey,
+      hasShield: Boolean(p.hasShield),
       hasMysteryBox: p.hasMysteryBox,
       relocating: Boolean(p.pendingRelocate)
     })),
@@ -350,7 +351,8 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         dead: player.dead,
         escaped: player.escaped,
         fall: player.fall,
-        hasKey: player.hasKey
+        hasKey: player.hasKey,
+        hasShield: Boolean(player.hasShield)
       });
 
       if (Number(prevPlayer.dead) === 1 && Number(player.dead) === 1) {
@@ -385,6 +387,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
       || playerFallTransition
       || shouldEmitPlayerDiameter
       || Boolean(prevPlayer.hasKey) !== Boolean(player.hasKey)
+      || Boolean(prevPlayer.hasShield) !== Boolean(player.hasShield)
       || Boolean(prevPlayer.hasMysteryBox) !== Boolean(player.hasMysteryBox)
       || Boolean(prevPlayer.relocating) !== Boolean(player.relocating)
       || prevPlayer.socketId !== player.socketId
@@ -398,6 +401,7 @@ function buildDeltaEvents(prevSnapshot, nextSnapshot, fullSnapshot = null) {
         escaped: player.escaped,
         fall: player.fall,
         hasKey: player.hasKey,
+        hasShield: Boolean(player.hasShield),
         hasMysteryBox: player.hasMysteryBox,
         socketId: player.socketId,
         relocating: Boolean(player.relocating),

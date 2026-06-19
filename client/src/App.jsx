@@ -203,6 +203,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? next.players[idx].escaped,
         fall: event.fall ?? next.players[idx].fall,
         hasKey: event.hasKey ?? next.players[idx].hasKey,
+        hasShield: event.hasShield ?? next.players[idx].hasShield,
         hasMysteryBox: event.hasMysteryBox ?? next.players[idx].hasMysteryBox,
         teleported: false
       };
@@ -245,6 +246,7 @@ function applyGameEvents(prevSnapshot, events, nowMs = Date.now()) {
         escaped: event.escaped ?? current.escaped,
         fall: nextFall,
         hasKey: event.hasKey ?? current.hasKey,
+        hasShield: event.hasShield ?? current.hasShield,
         hasMysteryBox: event.hasMysteryBox ?? current.hasMysteryBox,
         socketId: Object.prototype.hasOwnProperty.call(event, 'socketId') ? event.socketId : current.socketId,
         relocating: event.relocating ?? current.relocating,
@@ -1333,6 +1335,14 @@ export default function App() {
         if (!prevPlayer) continue;
 
         if (!prevPlayer.hasKey && player.hasKey) soundManager.play(SOUND.KEY);
+        if (
+          prevPlayer.hasShield
+          && !player.hasShield
+          && Number(player.dead) === 0
+          && !Boolean(player.fall)
+        ) {
+          soundManager.play(SOUND.SHIELD_BROKEN);
+        }
         if (!prevPlayer.escaped && player.escaped) soundManager.play(SOUND.EXIT);
         if (!revivedAny && prevPlayer.dead === 1 && player.dead === 0) {
           soundManager.play(SOUND.REVIVAL);

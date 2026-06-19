@@ -87,14 +87,15 @@ export const SERVER_CONFIG = {
   mysteryBox: {
     respawnMs: 5000, // Delay before a consumed mystery box respawns on the board.
     outcomes: [
-      'spawn_portal',
-      'spawn_crazy',
-      'add_life',
-      'spawn_map_tile',
-      'spawn_radar_tile',
-      'give_key',
-      'swap_player'
-      // Comment out any item above to disable it for testing.
+      { id: 'spawn_portal', weight: 1 },
+      { id: 'spawn_crazy', weight: 1 },
+      { id: 'add_life', weight: 4 },
+      { id: 'add_shield', weight: 100 },
+      { id: 'spawn_map_tile', weight: 2 },
+      { id: 'spawn_radar_tile', weight: 2 },
+      { id: 'give_key', weight: 1 },
+      { id: 'swap_player', weight: 1 }
+      // Set weight higher to make an outcome more likely, or 0 to disable it.
     ]
   },
   mazeAlgorithm: {

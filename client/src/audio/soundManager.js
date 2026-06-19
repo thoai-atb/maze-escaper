@@ -11,6 +11,7 @@ const SOUND_FILES = {
   PORTAL: '/audio/portal.wav',
   DOOR_CLOSE: '/audio/trapdoor_close.wav',
   KEY: '/audio/key.wav',
+  SHIELD_BROKEN: '/audio/shield_broken.wav',
   GHOST_FADE: '/audio/ghost_fade.wav',
   BOX: '/audio/box.wav',
   POWER_OFF: '/audio/power_off.wav'

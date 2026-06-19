@@ -14,6 +14,40 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function normalizeWeightedEntries(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return {
+          id: entry.trim(),
+          weight: 1
+        };
+      }
+
+      return {
+        id: String(entry?.id || '').trim(),
+        weight: Math.max(0, Number(entry?.weight) || 0)
+      };
+    })
+    .filter((entry) => entry.id);
+}
+
+function pickWeightedId(entries) {
+  const weightedEntries = normalizeWeightedEntries(entries)
+    .filter((entry) => entry.weight > 0);
+
+  const totalWeight = weightedEntries.reduce((sum, entry) => sum + entry.weight, 0);
+  if (totalWeight <= 0) return '';
+
+  let roll = Math.random() * totalWeight;
+  for (const entry of weightedEntries) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.id;
+  }
+
+  return weightedEntries[weightedEntries.length - 1]?.id || '';
+}
+
 function isFiniteNumber(value) {
   return value != null && Number.isFinite(Number(value));
 }
@@ -238,6 +272,7 @@ export class GameEngine {
         reviveStartedAt: 0,
         lastMoveAt: 0,
         trapCooldownAt: 0,
+        hasShield: false,
         ghostKillsRound: 0,
         teleported: false,
         pendingRelocate: null
@@ -607,6 +642,19 @@ export class GameEngine {
         if (player.dead || player.escaped) continue;
         if (this.cheatEnabled) continue;
         if (player.x === ghost.x && player.y === ghost.y) { // Easier to die, not checking cx, cy
+          if (player.hasShield) {
+            player.hasShield = false;
+            ghost.killedByPlayerId = player.id;
+            ghost.fall = true;
+            ghost.x = player.x;
+            ghost.y = player.y;
+            ghost.fx = player.x;
+            ghost.fy = player.y;
+            ghost.cx = player.x;
+            ghost.cy = player.y;
+            break;
+          }
+
           player.dead = 1;
           player.x = ghost.x;
           player.y = ghost.y;
@@ -617,6 +665,8 @@ export class GameEngine {
           this._updateKeyOwnerOnDeath(player);
         }
       }
+
+      if (ghost.fall) continue;
 
       this._checkPortalFor(ghost);
       this._checkTrapFor(ghost);
@@ -1083,31 +1133,24 @@ export class GameEngine {
   _applyMysteryBoxOutcome(player) {
     const boxX = Math.round(Number(this.mysteryBoxOwner?.x) || player.x);
     const boxY = Math.round(Number(this.mysteryBoxOwner?.y) || player.y);
-    const configuredOutcomes = Array.isArray(SERVER_CONFIG.mysteryBox?.outcomes)
-      ? SERVER_CONFIG.mysteryBox.outcomes
-      : [];
-    const allOutcomes = configuredOutcomes
-      .map((outcome) => String(outcome || '').trim())
-      .filter(Boolean);
+    const configuredOutcomes = normalizeWeightedEntries(SERVER_CONFIG.mysteryBox?.outcomes);
+    let availableOutcomes = configuredOutcomes;
 
     const playerAlreadyHasKey = this.keyOwner?.type === 'player' && this.keyOwner.playerId === player.id;
     if (playerAlreadyHasKey || !this.exitLocked) {
-      const keyIdx = allOutcomes.indexOf('give_key');
-      if (keyIdx >= 0) allOutcomes.splice(keyIdx, 1);
+      availableOutcomes = availableOutcomes.filter((entry) => entry.id !== 'give_key');
     }
 
     const connectedPlayers = this.getConnectedPlayers();
     if (connectedPlayers.length <= 1) {
-      const swapIdx = allOutcomes.indexOf('swap_player');
-      if (swapIdx >= 0) allOutcomes.splice(swapIdx, 1);
+      availableOutcomes = availableOutcomes.filter((entry) => entry.id !== 'swap_player');
     }
 
-    if (allOutcomes.length === 0) {
-      // Safe fallback when everything is commented out or filtered.
-      allOutcomes.push('add_life');
+    if (player.hasShield) {
+      availableOutcomes = availableOutcomes.filter((entry) => entry.id !== 'add_shield');
     }
 
-    const outcome = pickRandom(allOutcomes);
+    const outcome = pickWeightedId(availableOutcomes) || 'add_life';
     const result = {
       seq: this.mysteryBoxOpenSeq + 1,
       x: boxX,
@@ -1130,6 +1173,8 @@ export class GameEngine {
       this._spawnTileFromMysteryBox(1, boxX, boxY);
     } else if (outcome === 'give_key') {
       this.keyOwner = { type: 'player', playerId: player.id };
+    } else if (outcome === 'add_shield') {
+      player.hasShield = true;
     } else if (outcome === 'swap_player') {
       this._swapPlayerFromMysteryBox(player);
     }
@@ -1731,6 +1776,7 @@ export class GameEngine {
         ghostKills: Number(p.ghostKillsRound) || 0,
         diameter: p.diameter,
         teleported: Boolean(p.teleported),
+        hasShield: Boolean(p.hasShield),
         hasKey: this.keyOwner?.type === 'player' && this.keyOwner.playerId === p.id,
         hasMysteryBox: this.mysteryBoxOwner?.type === 'player' && this.mysteryBoxOwner.playerId === p.id,
         pendingRelocate: p.pendingRelocate ?? null

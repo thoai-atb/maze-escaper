@@ -137,6 +137,90 @@ function drawMysteryBox(ctx, x, y, unit, scale = 1) {
   ctx.restore();
 }
 
+const SHIELD_DOTS_BY_PLAYER = new Map();
+
+function drawShieldAura(ctx, player, unit, stroke, animationTimeMs) {
+  const cx = (player.cx + 0.5) * unit;
+  const cy = (player.cy + 0.5) * unit;
+  const isDead = Number(player.dead) > 0;
+  const orbitRadius = unit * 0.38 * (Number(player.diameter) || 0.5) * 2;
+  const dotRadius = Math.max(1.8, unit * 0.06 * (Number(player.diameter) || 0.5) * 2);
+  const freezeOrbit = isDead || Boolean(player.fall);
+  const playerKey = Number(player.id);
+  const nowMs = Number(animationTimeMs) || 0;
+  const baseAngle = (player.id * 0.65 + player.x * 0.2 + player.y * 0.13) % (Math.PI * 2);
+  const angleStep = (Math.PI * 2) / 3;
+  const orbitSpeedPerMs = 0.0048;
+  const trailLength = 32;
+
+  let state = SHIELD_DOTS_BY_PLAYER.get(playerKey);
+  if (!state) {
+    state = {
+      phase: 0,
+      lastMs: nowMs,
+      dots: [
+        {
+          x: cx,
+          y: cy,
+          history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
+        },
+        {
+          x: cx,
+          y: cy,
+          history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
+        },
+        {
+          x: cx,
+          y: cy,
+          history: Array.from({ length: trailLength }, () => ({ x: cx, y: cy }))
+        }
+      ]
+    };
+    SHIELD_DOTS_BY_PLAYER.set(playerKey, state);
+  }
+
+  let dtMs = nowMs - Number(state.lastMs);
+  if (!Number.isFinite(dtMs) || dtMs < 0) dtMs = 16.7;
+  dtMs = Math.max(0, Math.min(33.4, dtMs));
+  state.lastMs = nowMs;
+  if (!freezeOrbit) {
+    state.phase = (state.phase + orbitSpeedPerMs * dtMs) % (Math.PI * 2);
+  }
+
+  const lerpT = 1 - Math.exp(-0.018 * dtMs);
+  const baseColor = player.color || '#78ebff';
+  for (let i = 0; i < 3; i += 1) {
+    const angle = baseAngle + state.phase + i * angleStep;
+    const tx = cx + Math.cos(angle) * orbitRadius;
+    const ty = cy + Math.sin(angle) * orbitRadius;
+
+    const dot = state.dots[i];
+    dot.x += (tx - dot.x) * lerpT;
+    dot.y += (ty - dot.y) * lerpT;
+
+    if (!Array.isArray(dot.history)) {
+      dot.history = [{ x: dot.x, y: dot.y }];
+    }
+    dot.history.unshift({ x: dot.x, y: dot.y });
+    if (dot.history.length > trailLength) dot.history.length = trailLength;
+
+    const historyCount = dot.history.length;
+    for (let j = historyCount - 1; j >= 0; j -= 1) {
+      const h = dot.history[j];
+      const recency = historyCount <= 1 ? 1 : (historyCount - 1 - j) / (historyCount - 1);
+      const sizeScale = 0.35 + recency * 0.65;
+      const alpha = (isDead ? 0.16 : 0.2) + recency * (isDead ? 0.38 : 0.7);
+
+      const fillHexAlpha = Math.round(clamp(alpha, 0, 1) * 255).toString(16).padStart(2, '0');
+      ctx.fillStyle = `${baseColor}${fillHexAlpha}`;
+
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, dotRadius * sizeScale, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
 function cellColor(bright, type, enabled, explored, level, forceVisited = false) {
   const { h, s, l } = cellColorHsl(bright, type, enabled, explored, level, forceVisited);
   return hslColor(h, s, l);
@@ -839,6 +923,17 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     }
   }
 
+  const activeShieldPlayerIds = new Set(
+    (snapshot.players || [])
+      .filter((p) => p.socketId && p.hasShield && Number(p.dead) !== 2)
+      .map((p) => Number(p.id))
+  );
+  for (const key of SHIELD_DOTS_BY_PLAYER.keys()) {
+    if (!activeShieldPlayerIds.has(key)) {
+      SHIELD_DOTS_BY_PLAYER.delete(key);
+    }
+  }
+
   for (const player of snapshot.players) {
     if (!player.socketId) continue;
 
@@ -854,6 +949,10 @@ export function drawGame(ctx, snapshot, width, height, options = {}) {
     ctx.arc((player.cx + 0.5) * unit, (player.cy + 0.5) * unit, unit * 0.24 * player.diameter * 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+
+    if (player.hasShield) {
+      drawShieldAura(ctx, player, unit, stroke, animationTimeMs);
+    }
 
     if (player.hasKey) {
       drawKey(ctx, player.cx * unit, player.cy * unit, unit, 0.45);
