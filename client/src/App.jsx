@@ -97,23 +97,8 @@ function applyClientPrediction(prevSnapshot, mapPayload, mySocketId, action) {
   if (!me || me.dead || me.escaped || me.fall) return prevSnapshot;
 
   if (action === 'trap') {
-    const trapExists = (prevSnapshot.traps || []).some((t) => sameCellTrap(t, me.x, me.y));
-    if (trapExists) return prevSnapshot;
-
-    return {
-      ...prevSnapshot,
-      traps: [
-        ...(prevSnapshot.traps || []),
-        {
-          x: me.x,
-          y: me.y,
-          outer: 0.7,
-          inner: 0,
-          set: false,
-          active: false
-        }
-      ]
-    };
+    // Trap visuals should come only from authoritative server events.
+    return prevSnapshot;
   }
 
   const { dx, dy } = actionToDelta(action);
@@ -1147,13 +1132,6 @@ export default function App() {
             if (pendingMovesRef.current.length > 8) {
               pendingMovesRef.current.shift();
             }
-          }
-        }
-
-        if (mapped === 'trap' && nextSnapshot !== prev) {
-          const me = prev?.players?.find((p) => p.socketId === mySocketIdRef.current);
-          if (me) {
-            predictedTrapsRef.current.add(`${me.x},${me.y}`);
           }
         }
 
